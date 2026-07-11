@@ -18,6 +18,7 @@ class Summary(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
 
     status: Mapped[SummaryStatus] = mapped_column(
         Enum(SummaryStatus, native_enum=False, length=20),

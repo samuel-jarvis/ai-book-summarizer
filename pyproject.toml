@@ -8,7 +8,12 @@ dependencies = [
     "alembic>=1.18.5",
     "asyncpg>=0.31.0",
     "fastapi[standard]>=0.139.0",
+    "openai>=2.45.0",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.2",
+    "pymupdf>=1.28.0",
     "sqlalchemy>=2.0.51",
+    "taskiq>=0.12.4",
+    "taskiq-redis>=1.2.3",
+    "tqdm>=4.68.4",
 ]

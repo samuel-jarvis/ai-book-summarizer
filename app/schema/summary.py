@@ -7,6 +7,7 @@ from app.schema.response import ApiResponse
 
 class SummarizeCreate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=3, max_length=255)
+    file_path: str
 
 
 class SummarizeResponse(BaseModel):
@@ -18,3 +19,4 @@ class SummarizeResponse(BaseModel):
 
 
 SummarizeApiResponse = ApiResponse[SummarizeResponse]
+SummarizeListApiResponse = ApiResponse[list[SummarizeResponse]]
