@@ -29,6 +29,14 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+async def init_db() -> None:
+    """Create database tables for registered SQLAlchemy models."""
+    import app.models
+
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         try:

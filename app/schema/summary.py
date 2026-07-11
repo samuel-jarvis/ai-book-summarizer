@@ -2,6 +2,7 @@ from typing import Optional
 import uuid
 from pydantic import BaseModel, ConfigDict, Field
 from app.models.summary import SummaryStatus
+from app.schema.response import ApiResponse
 
 
 class SummarizeCreate(BaseModel):
@@ -14,3 +15,6 @@ class SummarizeResponse(BaseModel):
     id: uuid.UUID
     title: Optional[str]
     status: SummaryStatus
+
+
+SummarizeApiResponse = ApiResponse[SummarizeResponse]

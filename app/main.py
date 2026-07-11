@@ -1,5 +1,4 @@
-import sys
-from pathlib import Path
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,11 +6,19 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.database import init_db
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await init_db()
+    yield
 
 app = FastAPI(
     title="AI Book Summarizer",
     description="An API that summarizes books using AI.",
     version="1.0.0",
+    lifespan=lifespan,
     contact={
         "name": "Jarvis 2077",
         "email": "jarvisdev2077@gmail.com"
