@@ -44,5 +44,7 @@ class DeepSeekAIService:
                 "DeepSeek authentication failed (401). Check DEEPSEEK_API_KEY in .env and ensure it is a valid active key."
             ) from exc
 
+        print(f"DeepSeek API response: {response}")
+
         content = response.choices[0].message.content if response.choices else None
         return content.strip() if content else ""

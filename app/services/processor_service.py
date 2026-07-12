@@ -1,10 +1,13 @@
 import asyncio
+import uuid
 import fitz  # pymupdf
 import re
 from pathlib import Path
 from app.utils.prompts import CHUNK_PROMPT, SUMMARY_PROMPT
 import tqdm
 from app.services.ai_service import DeepSeekAIService
+from app.core.database import AsyncSessionLocal
+from app.models.summary import Summary, SummaryStatus
 
 # if __package__ in (None, ""):
 #     import sys
@@ -138,6 +141,29 @@ async def summarize_pdf(file_path: str) -> str:
     final_summary = await summarize_combined_summary(combined_summary, SUMMARY_PROMPT)
 
     return final_summary
+
+
+async def process_summary(summary_id: str) -> None:
+    async with AsyncSessionLocal() as db:
+        summary = await db.get(Summary, uuid.UUID(summary_id))
+        if summary is None:
+            print(f"Summary {summary_id} not found; skipping.")
+            return
+
+        summary.status = SummaryStatus.PROCESSING
+        await db.commit()
+
+        try:
+            final_summary = await summarize_pdf(summary.file_path)
+        except Exception as e:
+            print(f"Failed to summarize summary {summary_id}: {e}")
+            summary.status = SummaryStatus.FAILED
+            await db.commit()
+            return
+
+        summary.content = final_summary
+        summary.status = SummaryStatus.COMPLETED
+        await db.commit()
 
 
 # if __name__ == "__main__":

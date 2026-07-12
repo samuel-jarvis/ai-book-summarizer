@@ -3,9 +3,10 @@ from pathlib import Path
 from typing_extensions import Annotated
 
 from fastapi import APIRouter, Form, UploadFile, File, HTTPException, status
-from app.schema.summary import SummarizeCreate, SummarizeResponse, SummarizeApiResponse, SummarizeListApiResponse
+from app.schema.summary import SummarizeCreate, SummarizeResponse, SummarizeDetailResponse, SummarizeApiResponse, SummarizeDetailApiResponse, SummarizeListApiResponse
 from app.services.summary_service import SummaryService
 from app.api.deps import DbSession
+from app.tasks import process_pdf_task
 
 UPLOAD_DIR = Path("temp_uploads").resolve()
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -65,6 +66,9 @@ async def create_summary(
 
     summary = await SummaryService(db).start_summary(data=payload)
 
+    # Hand off the heavy PDF summarization to a background worker.
+    await process_pdf_task.kiq(str(summary.id))
+
     return SummarizeApiResponse(
         success=True,
         message="Summary created successfully",
@@ -72,7 +76,7 @@ async def create_summary(
     )
 
 
-@router.get("/summary/{summary_id}", response_model=SummarizeApiResponse)
+@router.get("/summary/{summary_id}", response_model=SummarizeDetailApiResponse)
 async def get_summary_by_id(summary_id: uuid.UUID, db: DbSession):
     summary = await SummaryService(db).get_summary_by_id(summary_id=summary_id)
 
@@ -82,8 +86,8 @@ async def get_summary_by_id(summary_id: uuid.UUID, db: DbSession):
             detail="Summary not found",
         )
 
-    return SummarizeApiResponse(
+    return SummarizeDetailApiResponse(
         success=True,
         message="Summary retrieved successfully",
-        data=SummarizeResponse.model_validate(summary),
+        data=SummarizeDetailResponse.model_validate(summary),
     )

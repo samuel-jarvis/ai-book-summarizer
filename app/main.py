@@ -1,4 +1,6 @@
+import asyncio
 from contextlib import asynccontextmanager
+import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,12 +9,20 @@ from fastapi.middleware.gzip import GZipMiddleware
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import init_db
+from app.taskiq_broker import broker
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db()
+    if not broker.is_worker_process:
+        await broker.startup()
     yield
+    if not broker.is_worker_process:
+        await broker.shutdown()
 
 app = FastAPI(
     title="AI Book Summarizer",
