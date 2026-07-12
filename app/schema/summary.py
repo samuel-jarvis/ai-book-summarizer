@@ -22,6 +22,10 @@ class SummarizeDetailResponse(SummarizeResponse):
     content: Optional[str] = None
 
 
+class SummarizeUpdate(BaseModel):
+    title: str
+
+
 SummarizeApiResponse = ApiResponse[SummarizeResponse]
 SummarizeDetailApiResponse = ApiResponse[SummarizeDetailResponse]
 SummarizeListApiResponse = ApiResponse[list[SummarizeResponse]]

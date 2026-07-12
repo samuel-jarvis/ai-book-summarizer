@@ -3,9 +3,10 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schema.summary import SummarizeCreate
+from app.core.exception import NotFoundError, ValidationError
+from app.schema.summary import SummarizeCreate, SummarizeUpdate
 
-from app.models.summary import Summary
+from app.models.summary import Summary, SummaryStatus
 
 
 class SummaryService:
@@ -37,3 +38,26 @@ class SummaryService:
         result = await self.db.execute(query)
         data = result.scalars().all()
         return data
+
+    async def delete_book(self, summary_id: uuid.UUID):
+        summary = await self.db.get(Summary, summary_id)
+
+        if summary is None:
+            raise NotFoundError("Not found error")
+
+        if summary.status is SummaryStatus.COMPLETED:
+            raise ValidationError("You can't delete this")
+
+        await self.db.delete(summary)
+        await self.db.flush()
+        await self.db.commit()
+
+    async def update_book_title(self, summary_id: uuid.UUID, data: SummarizeUpdate):
+        summary = await self.db.get(Summary, summary_id)
+
+        if summary is None:
+            raise NotFoundError("Not found error")
+
+        summary.title = data.title
+        await self.db.flush()
+        await self.db.commit()
