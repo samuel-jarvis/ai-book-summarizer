@@ -1,27 +1,44 @@
 import asyncio
 from contextlib import asynccontextmanager
+import logging
 import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from redis.exceptions import RedisError
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import init_db
 from app.taskiq_broker import broker
 
+logger = logging.getLogger(__name__)
+
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     await init_db()
+    app.state.task_queue_started = False
+
     if not broker.is_worker_process:
-        await broker.startup()
+        try:
+            await broker.startup()
+        except RedisError:
+            logger.warning(
+                "Redis is unavailable; starting the API without background "
+                "task processing. Summary uploads will return 503 until Redis "
+                "is reachable."
+            )
+        else:
+            app.state.task_queue_started = True
+
     yield
-    if not broker.is_worker_process:
+
+    if not broker.is_worker_process and app.state.task_queue_started:
         await broker.shutdown()
 
 app = FastAPI(

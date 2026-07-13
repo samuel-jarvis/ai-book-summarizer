@@ -1,6 +1,7 @@
 
 from functools import lru_cache
 from typing import Literal
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +25,16 @@ class Settings(BaseSettings):
         "http://localhost:3000", "http://localhost:8000"
     ]
     REDIS_URL: str
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def use_asyncpg_driver(cls, value: str) -> str:
+        """Convert provider PostgreSQL URLs to SQLAlchemy's asyncpg URL."""
+        if value.startswith("postgres://"):
+            return value.replace("postgres://", "postgresql+asyncpg://", 1)
+        if value.startswith("postgresql://"):
+            return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return value
 
 
 @lru_cache

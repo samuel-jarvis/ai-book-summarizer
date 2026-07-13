@@ -23,6 +23,8 @@ class Summary(Base):
 
     content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    source_text: Mapped[str] = mapped_column(Text, nullable=False)
+
     status: Mapped[SummaryStatus] = mapped_column(
         Enum(SummaryStatus, native_enum=False, length=20),
         default=SummaryStatus.PENDING,

@@ -3,13 +3,16 @@ from pathlib import Path
 from typing_extensions import Annotated
 
 from fastapi import APIRouter, Form, UploadFile, File, HTTPException, status
-from app.schema.summary import SummarizeCreate, SummarizeResponse, SummarizeDetailResponse, SummarizeApiResponse, SummarizeDetailApiResponse, SummarizeListApiResponse, SummarizeUpdate
+from redis.exceptions import RedisError
+
+from app.schema.summary import SummarizeCreate, SummarizeCreateForm, SummarizeResponse, SummarizeDetailResponse, SummarizeApiResponse, SummarizeDetailApiResponse, SummarizeListApiResponse, SummarizeUpdate
 from app.services.summary_service import SummaryService
 from app.api.deps import DbSession
 from app.tasks import process_pdf_task
+from app.taskiq_broker import is_task_queue_available
 
 UPLOAD_DIR = Path("temp_uploads").resolve()
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
+MAX_UPLOAD_BYTES = 35 * 1024 * 1024  # 35 MB
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 router = APIRouter()
@@ -33,6 +36,12 @@ async def create_summary(
     file: Annotated[UploadFile, File(description="Book file (pdf/epub)")],
     db: DbSession,
 ):
+    if not await is_task_queue_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The background task queue is unavailable. Please try again later.",
+        )
+
     if not file or not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -45,29 +54,42 @@ async def create_summary(
             detail="Only PDF files are supported"
         )
 
-    # Save the uploaded file to a safe temporary location using a UUID name
-    # to prevent path traversal and filename-collision attacks.
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     temp_file_path = UPLOAD_DIR / f"{uuid.uuid4()}.pdf"
 
     total_bytes = 0
+    file_too_large = False
     with open(temp_file_path, "wb") as f:
         while chunk := await file.read(CHUNK_SIZE):
             total_bytes += len(chunk)
             if total_bytes > MAX_UPLOAD_BYTES:
-                temp_file_path.unlink(missing_ok=True)
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
-                )
+                file_too_large = True
+                break
             f.write(chunk)
 
-    payload = SummarizeCreate(title=title, file_path=str(temp_file_path))
+    if file_too_large:
+        temp_file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+        )
+
+    payload = SummarizeCreateForm(title=title, file_path=str(temp_file_path))
 
     summary = await SummaryService(db).start_summary(data=payload)
 
     # Hand off the heavy PDF summarization to a background worker.
-    await process_pdf_task.kiq(str(summary.id))
+    try:
+        await process_pdf_task.kiq(str(summary.id))
+    except RedisError as exc:
+        # Redis may go down between the availability check and task dispatch.
+        await SummaryService(db).delete_book(summary.id)
+        temp_file_path.unlink(missing_ok=True)
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The background task queue is unavailable. Please try again later.",
+        ) from exc
 
     return SummarizeApiResponse(
         success=True,

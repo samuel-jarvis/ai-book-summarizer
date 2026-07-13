@@ -124,12 +124,9 @@ async def summarize_combined_summary(combined_summary: str, prompt: str):
     return final_summary if final_summary else "No summary generated."
 
 
-async def summarize_pdf(file_path: str) -> str:
-    # Extract and clean text from the PDF
-    extracted_clean_text = extract_and_clean_text_from_pdf(file_path)
-
+async def summarize_pdf(text: str) -> str:
     # Chunk the cleaned text
-    chunked_text = chunk_text(extracted_clean_text)
+    chunked_text = chunk_text(text)
 
     # Summarize each chunk
     chunk_summaries = await summarize_chunks(chunked_text, CHUNK_PROMPT)
@@ -154,7 +151,7 @@ async def process_summary(summary_id: str) -> None:
         await db.commit()
 
         try:
-            final_summary = await summarize_pdf(summary.file_path)
+            final_summary = await summarize_pdf(summary.source_text)
         except Exception as e:
             print(f"Failed to summarize summary {summary_id}: {e}")
             summary.status = SummaryStatus.FAILED

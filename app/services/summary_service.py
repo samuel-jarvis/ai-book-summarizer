@@ -4,19 +4,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exception import NotFoundError, ValidationError
-from app.schema.summary import SummarizeCreate, SummarizeUpdate
+from app.schema.summary import SummarizeCreate, SummarizeCreateForm, SummarizeUpdate
 
 from app.models.summary import Summary, SummaryStatus
+from app.services.processor_service import extract_text_from_pdf
 
 
 class SummaryService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def start_summary(self, data: SummarizeCreate):
+    async def start_summary(self, data: SummarizeCreateForm) -> Summary:
+        source_text = extract_text_from_pdf(data.file_path)
+
+        payload = SummarizeCreate(title=data.title, source_text=source_text)
+
         new_summary = Summary(
-            title=data.title,
+            title=payload.title,
             file_path=data.file_path,
+            source_text=payload.source_text,
         )
 
         self.db.add(new_summary)
