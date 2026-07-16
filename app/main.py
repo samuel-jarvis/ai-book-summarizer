@@ -3,14 +3,16 @@ from contextlib import asynccontextmanager
 import logging
 import sys
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from redis.exceptions import RedisError
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import init_db
+from app.core.exception import AppError
 from app.taskiq_broker import broker
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,15 @@ if settings.BACKEND_CORS_ORIGINS:
     )
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"message": exc.detail, "data": None, "success": False},
+    )
+
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
