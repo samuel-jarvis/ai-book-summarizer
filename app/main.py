@@ -11,7 +11,6 @@ from redis.exceptions import RedisError
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.database import init_db
 from app.core.exception import AppError
 from app.taskiq_broker import broker
 
@@ -23,7 +22,7 @@ if sys.platform == "win32":
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    # Schema is owned by Alembic — run `uv run alembic upgrade head`.
     app.state.task_queue_started = False
 
     if not broker.is_worker_process:
@@ -72,6 +71,7 @@ async def app_error_handler(request: Request, exc: AppError):
     return JSONResponse(
         status_code=exc.status_code,
         content={"message": exc.detail, "data": None, "success": False},
+        headers=exc.headers,
     )
 
 

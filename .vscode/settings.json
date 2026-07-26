@@ -1,3 +1,15 @@
 {
-  "cSpell.words": ["autoflush", "fitz", "sessionmaker", "taskiq"]
+  "cSpell.words": [
+    "autoflush",
+    "dbname",
+    "fitz",
+    "joinedload",
+    "ondelete",
+    "onupdate",
+    "poolclass",
+    "pwdlib",
+    "sessionmaker",
+    "sqlalchemy",
+    "taskiq"
+  ]
 }

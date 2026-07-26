@@ -25,6 +25,19 @@ class Settings(BaseSettings):
         "http://localhost:3000", "http://localhost:8000"
     ]
     REDIS_URL: str
+    SECRET_KEY: str
+
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+
+    ACCESS_COOKIE_NAME: str = "access_token"
+    REFRESH_COOKIE_NAME: str = "refresh_token"
+
+    @property
+    def cookie_secure(self) -> bool:
+        """HTTPS-only cookies everywhere but local development over http."""
+        return self.ENVIRONMENT != "development"
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod

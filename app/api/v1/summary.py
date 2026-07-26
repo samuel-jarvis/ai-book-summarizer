@@ -5,9 +5,9 @@ from typing_extensions import Annotated
 from fastapi import APIRouter, Form, UploadFile, File, HTTPException, status
 from redis.exceptions import RedisError
 
-from app.schema.summary import SummarizeCreate, SummarizeCreateForm, SummarizeResponse, SummarizeDetailResponse, SummarizeApiResponse, SummarizeDetailApiResponse, SummarizeListApiResponse, SummarizeUpdate
+from app.schema.summary import SummarizeCreateForm, SummarizeResponse, SummarizeDetailResponse, SummarizeApiResponse, SummarizeDetailApiResponse, SummarizeListApiResponse, SummarizeUpdate
 from app.services.summary_service import SummaryService
-from app.api.deps import DbSession
+from app.api.deps import CurrentUser, DbSession
 from app.tasks import process_pdf_task
 from app.taskiq_broker import is_task_queue_available
 
@@ -19,8 +19,8 @@ router = APIRouter()
 
 
 @router.get("/summary", response_model=SummarizeListApiResponse)
-async def get_summary(db: DbSession):
-    summaries = await SummaryService(db).get_all()
+async def get_summary(db: DbSession, current_user: CurrentUser):
+    summaries = await SummaryService(db).get_all(current_user.id)
 
     return SummarizeListApiResponse(
         success=True,
@@ -35,11 +35,12 @@ async def create_summary(
     title: Annotated[str, Form()],
     file: Annotated[UploadFile, File(description="Book file (pdf/epub)")],
     db: DbSession,
+    current_user: CurrentUser,
 ):
     if not await is_task_queue_available():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The background task queue is unavailable. Please try again later.",
+            detail="The task queue is unavailable. Please try again later.",
         )
 
     if not file or not file.filename:
@@ -76,19 +77,20 @@ async def create_summary(
 
     payload = SummarizeCreateForm(title=title, file_path=str(temp_file_path))
 
-    summary = await SummaryService(db).start_summary(data=payload)
+    summary = await SummaryService(db).start_summary(
+        data=payload, user_id=current_user.id)
 
     # Hand off the heavy PDF summarization to a background worker.
     try:
         await process_pdf_task.kiq(str(summary.id))
     except RedisError as exc:
         # Redis may go down between the availability check and task dispatch.
-        await SummaryService(db).delete_book(summary.id)
+        await SummaryService(db).delete_book(summary.id, current_user.id)
         temp_file_path.unlink(missing_ok=True)
 
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The background task queue is unavailable. Please try again later.",
+            detail="The task queue is unavailable. Please try again later.",
         ) from exc
 
     return SummarizeApiResponse(
@@ -99,8 +101,9 @@ async def create_summary(
 
 
 @router.get("/summary/{summary_id}", response_model=SummarizeDetailApiResponse)
-async def get_summary_by_id(summary_id: uuid.UUID, db: DbSession):
-    summary = await SummaryService(db).get_summary_by_id(summary_id=summary_id)
+async def get_summary_by_id(summary_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    summary = await SummaryService(db).get_summary_by_id(
+        summary_id=summary_id, user_id=current_user.id)
 
     if not summary:
         raise HTTPException(
@@ -116,8 +119,8 @@ async def get_summary_by_id(summary_id: uuid.UUID, db: DbSession):
 
 
 @router.delete("/summary/{summary_id}")
-async def delete_summary_by_id(summary_id: uuid.UUID, db: DbSession):
-    await SummaryService(db).delete_book(summary_id)
+async def delete_summary_by_id(summary_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    await SummaryService(db).delete_book(summary_id, current_user.id)
 
     return {
         "success": True,
@@ -126,11 +129,18 @@ async def delete_summary_by_id(summary_id: uuid.UUID, db: DbSession):
 
 
 @router.put("/summary/{summary_id}", response_model=SummarizeApiResponse)
-async def update_summary_title(summary_id: uuid.UUID, title: Annotated[str, Form()], db: DbSession):
+async def update_summary_title(
+    summary_id: uuid.UUID,
+    title: Annotated[str, Form()],
+    db: DbSession,
+    current_user: CurrentUser,
+):
     payload = SummarizeUpdate(title=title)
-    await SummaryService(db).update_book_title(summary_id, payload)
+    await SummaryService(db).update_book_title(
+        summary_id, payload, current_user.id)
 
-    updated_summary = await SummaryService(db).get_summary_by_id(summary_id)
+    updated_summary = await SummaryService(db).get_summary_by_id(
+        summary_id, current_user.id)
 
     return SummarizeApiResponse(
         success=True,
