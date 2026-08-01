@@ -1,18 +1,68 @@
 import uuid
+from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exception import NotFoundError, ValidationError
+from app.core.config import settings
+from app.core.database import utcnow
+from app.core.exception import NotFoundError, RateLimitError, ValidationError
 from app.schema.summary import SummarizeCreate, SummarizeCreateForm, SummarizeUpdate
 
 from app.models.summary import Summary, SummaryStatus
 from app.services.processor_service import extract_text_from_pdf
 
 
+def _start_of_utc_day(moment: datetime) -> datetime:
+    return moment.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 class SummaryService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+
+    async def count_started_today(self, user_id: uuid.UUID) -> int:
+        """How many summaries this user has started since midnight UTC.
+
+        Failed runs don't count — a job that died on our side shouldn't burn
+        one of the user's three attempts.
+        """
+        query = (
+            select(func.count())
+            .select_from(Summary)
+            .where(
+                Summary.user_id == user_id,
+                Summary.created_at >= _start_of_utc_day(utcnow()),
+                Summary.status != SummaryStatus.FAILED,
+            )
+        )
+
+        result = await self.db.execute(query)
+        return result.scalar_one()
+
+    async def ensure_daily_quota(self, user_id: uuid.UUID) -> None:
+        """Raise `RateLimitError` once the user is out of daily summaries.
+
+        Checked before the upload is streamed to disk, so a user over quota
+        never pays for the transfer or the text extraction.
+        """
+        limit = settings.DAILY_SUMMARY_LIMIT
+
+        if limit <= 0 or await self.count_started_today(user_id) < limit:
+            return
+
+        now = utcnow()
+        reset_at = _start_of_utc_day(now + timedelta(days=1))
+        hours = max(1, -(-int((reset_at - now).total_seconds()) // 3600))
+
+        raise RateLimitError(
+            f"You've used all {limit} of your summaries for today. "
+            "Lumen AI is still early, and we're managing compute carefully "
+            "so every summary gets finished properly — so uploads are capped "
+            f"for now. Your next {limit} unlock in about {hours} "
+            f"hour{'s' if hours != 1 else ''} (midnight UTC). "
+            "Thanks for bearing with us."
+        )
 
     async def start_summary(
         self, data: SummarizeCreateForm, user_id: uuid.UUID

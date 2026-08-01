@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     ACCESS_COOKIE_NAME: str = "access_token"
     REFRESH_COOKIE_NAME: str = "refresh_token"
 
+    DAILY_SUMMARY_LIMIT: int = 3
+
     @property
     def cookie_secure(self) -> bool:
         """HTTPS-only cookies everywhere but local development over http."""

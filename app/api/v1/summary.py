@@ -12,7 +12,7 @@ from app.tasks import process_pdf_task
 from app.taskiq_broker import is_task_queue_available
 
 UPLOAD_DIR = Path("temp_uploads").resolve()
-MAX_UPLOAD_BYTES = 35 * 1024 * 1024  # 35 MB
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 router = APIRouter()
@@ -42,6 +42,10 @@ async def create_summary(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The task queue is unavailable. Please try again later.",
         )
+
+    # Before the upload is streamed anywhere: over-quota users shouldn't pay
+    # for the transfer, and we shouldn't write a temp file we'd have to clean up.
+    await SummaryService(db).ensure_daily_quota(current_user.id)
 
     if not file or not file.filename:
         raise HTTPException(

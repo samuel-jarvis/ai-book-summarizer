@@ -47,3 +47,10 @@ class ConflictError(AppError):
 
     status_code = status.HTTP_409_CONFLICT
     code = "conflict"
+
+
+class RateLimitError(AppError):
+    """You have reached the limit for now. Please try again later."""
+
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    code = "rate_limited"
