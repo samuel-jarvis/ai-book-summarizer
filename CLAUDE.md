@@ -130,13 +130,50 @@ Authentication (`/api/v1/auth/{register,login,refresh,logout,me,sessions}`):
 Summarization pipeline (map-reduce):
 - `app/services/processor_service.py` — `summarize_pdf()` orchestrates: extract text with
   **pymupdf** (`import fitz`) → `clean_text` (regex de-hyphenation/whitespace) →
-  `chunk_text` (4000 chars, 400 overlap) → summarize each chunk → combine → final
-  synthesis pass. `process_summary(summary_id)` wraps it for the worker: opens its own
+  `chunk_text` → summarize each chunk → combine → final synthesis pass.
+  `process_summary(summary_id)` wraps it for the worker: opens its own
   `AsyncSessionLocal` session, transitions the record's status, and persists the result to
   `Summary.content`.
+- **The map stage runs concurrently.** `summarize_chunks` fans every chunk out through
+  `asyncio.gather` behind an `asyncio.Semaphore`; `asyncio.gather` is what preserves chunk
+  order, which the reduce step depends on. Tuning lives in `config.py`:
+  `SUMMARY_CHUNK_SIZE` (24000 chars ≈ 6k tokens), `SUMMARY_CHUNK_OVERLAP` (400), and
+  `SUMMARY_MAX_CONCURRENCY` (6). Chunk size was 4000 with a serial loop, which meant
+  ~167 sequential calls for a 300-page book.
+- **`summarize_pdf` is the only place that times anything** — it prints `[timing]` lines per
+  stage (chunking / map / reduce / total). Deeper layers stay timing-free on purpose:
+  `summarize_chunks` prints a bare `[chunk] n/total returned` progress line and
+  `DeepSeekAIService` prints no duration at all. Don't reintroduce per-call timers.
 - `app/services/ai_service.py` — `DeepSeekAIService` wraps the **OpenAI SDK's**
   `AsyncOpenAI` client pointed at `DEEPSEEK_BASE_URL` (DeepSeek is OpenAI-compatible).
-  Default model `deepseek-v4-flash`.
+  Default model `deepseek-v4-flash`; the reduce pass overrides to `deepseek-v4-pro`.
+  Each call logs one `[deepseek]` line — model, finish reason, token counts, and a
+  `LOG_PREVIEW_CHARS`-truncated preview of the text (not the whole response object).
+- **Every call is tagged with `user_id`.** DeepSeek uses it for content-safety, KVCache and
+  scheduling isolation between end users sharing one API key. It is a DeepSeek extension,
+  *not* an OpenAI parameter, so it goes through `extra_body={"user_id": ...}` — passing it
+  as `user=` would silently tag nothing. The value is the owning `User.id` UUID, threaded
+  `process_summary → summarize_pdf → summarize_chunks/summarize_combined_summary →
+  summarize_text`. `Summary.user_id` is still nullable, so `None` is normal and simply
+  omits the field. Values are checked against `[a-zA-Z0-9\-_]{1,512}` and dropped with a
+  log line if malformed — a bad value would 400 the whole summary, and losing isolation
+  beats losing the run.
+- **Provider errors never leave the worker log.** DeepSeek's error text describes *our*
+  account (402 insufficient balance, 401 bad key, quota), so none of it is persisted or
+  returned; a failed run reaches the client purely as `SummaryStatus.FAILED`, and there is
+  deliberately no `error_message` column or field. `ai_service` catches `APIStatusError`
+  and switches on `exc.status_code` rather than on exception class — 402 has no dedicated
+  class in the SDK and would otherwise go unclassified — attaching an `OPERATOR_HINTS`
+  line for whoever reads the log. If a user-facing failure reason is ever wanted, it needs
+  a separate hand-written message, never provider text.
+- **Retries are the SDK's, not hand-rolled.** `AsyncOpenAI` is constructed with
+  `max_retries=DEEPSEEK_MAX_RETRIES` (3) and an explicit `timeout`; it already backs off
+  exponentially and honours `Retry-After` for connection errors, timeouts, 408/409/429 and
+  5xx. The timeout must be set — the 600s default would pin a semaphore slot for ten
+  minutes. `DEEPSEEK_TIMEOUT_SECONDS` (120) covers map calls; the reduce pass is
+  constructed with `DEEPSEEK_REDUCE_TIMEOUT_SECONDS` (300) since it has the largest input
+  and longest generation. Exhausted timeouts and 429s are re-raised as `RuntimeError` with
+  the knob to turn named in the message.
 - `app/utils/prompts.py` — `CHUNK_PROMPT` (per-chunk) and `SUMMARY_PROMPT` (final
   synthesis) templates; both use `.format(text=...)`.
 

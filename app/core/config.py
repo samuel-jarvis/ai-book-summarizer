@@ -36,6 +36,14 @@ class Settings(BaseSettings):
 
     DAILY_SUMMARY_LIMIT: int = 3
 
+    SUMMARY_CHUNK_SIZE: int = 20000
+    SUMMARY_CHUNK_OVERLAP: int = 400
+    SUMMARY_MAX_CONCURRENCY: int = 15
+
+    DEEPSEEK_TIMEOUT_SECONDS: float = 120.0
+    DEEPSEEK_REDUCE_TIMEOUT_SECONDS: float = 300.0
+    DEEPSEEK_MAX_RETRIES: int = 3
+
     @property
     def cookie_secure(self) -> bool:
         """HTTPS-only cookies everywhere but local development over http."""

@@ -64,9 +64,7 @@ prompts = {
 
 CHUNK_PROMPT = """You are an expert, objective book summarizer.
 
-First, determine the type of content in this excerpt: Fiction, Non-Fiction, or Professional/Work Document.
-
-Then, create a clear, detailed but concise summary of the provided text excerpt.
+Create a clear, detailed but concise summary of the provided text excerpt.
 
 Focus on:
 - Main ideas, arguments, or plot developments
@@ -78,7 +76,8 @@ Requirements:
 - Be accurate and faithful to the original text
 - Avoid adding external information or speculation
 - Use neutral language
-- Keep the summary proportional to the content length
+- Aim for 300-400 words. Favour density over length and never pad to reach it
+- If the excerpt carries little substance (front matter, references, index, filler), say so in a sentence or two rather than inflating it
 
 Text excerpt:
 {text}
