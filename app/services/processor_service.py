@@ -121,7 +121,7 @@ async def summarize_combined_summary(
     combined_summary: str, prompt: str, user_id: str | None = None
 ):
     ai_service = DeepSeekAIService(
-        'deepseek-v4-pro',
+        'deepseek-v4-flash',
         timeout=settings.DEEPSEEK_REDUCE_TIMEOUT_SECONDS,
     )
     final_summary = await ai_service.summarize_text(

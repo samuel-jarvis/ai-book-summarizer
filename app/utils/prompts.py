@@ -70,7 +70,6 @@ Focus on:
 - Main ideas, arguments, or plot developments
 - Key details, evidence, examples, or character actions
 - Important concepts, turning points, or takeaways
-- Tone and style (if relevant)
 
 Requirements:
 - Be accurate and faithful to the original text
@@ -105,15 +104,16 @@ First, identify the overall book type (Fiction / Non-Fiction / Work Document) an
 - Most important lessons, messages, or memorable elements
 - Practical applications (for non-fiction)
 
-**4. Additional Analysis (if relevant)**
-- Writing style, strengths/weaknesses, target audience
-
 **Guidelines:**
+- Use exactly the three sections above. Do not add sections of your own
+- Summarize what the book says; do not review or evaluate it. No commentary on writing
+  style, strengths, weaknesses, target audience, or who should read it
 - Maintain logical flow and coherence
 - Eliminate redundancy while preserving important details
 - Prioritize accuracy and balance
 - Use clear headings and bullet points for readability
 - Keep the tone professional yet engaging
+- Never use em dashes (—). Use a comma, period, colon, or parentheses instead
 
 Section summaries to synthesize:
 {text}
