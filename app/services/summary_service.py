@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timedelta
 
@@ -11,6 +12,8 @@ from app.schema.summary import SummarizeCreate, SummarizeCreateForm, SummarizeUp
 
 from app.models.summary import Summary, SummaryStatus
 from app.services.processor_service import extract_text_from_pdf
+
+MIN_SOURCE_CHARS = 10
 
 
 def _start_of_utc_day(moment: datetime) -> datetime:
@@ -67,7 +70,15 @@ class SummaryService:
     async def start_summary(
         self, data: SummarizeCreateForm, user_id: uuid.UUID
     ) -> Summary:
-        source_text = extract_text_from_pdf(data.file_path)
+        source_text = await asyncio.to_thread(
+            extract_text_from_pdf, data.file_path)
+
+        if len(source_text.strip()) < MIN_SOURCE_CHARS:
+            raise ValidationError(
+                "This PDF has no selectable text. It looks like a scan or an "
+                "image-only file — or one we couldn't open. Try a text-based "
+                "PDF, or run this one through OCR first."
+            )
 
         payload = SummarizeCreate(title=data.title, source_text=source_text)
 
@@ -102,8 +113,9 @@ class SummaryService:
     async def delete_book(self, summary_id: uuid.UUID, user_id: uuid.UUID):
         summary = await self._get_owned(summary_id, user_id)
 
-        if summary.status is SummaryStatus.COMPLETED:
-            raise ValidationError("You can't delete this")
+        if summary.status is SummaryStatus.PROCESSING:
+            raise ValidationError(
+                "You can't delete a summary while it's being processed.")
 
         await self.db.delete(summary)
         await self.db.flush()

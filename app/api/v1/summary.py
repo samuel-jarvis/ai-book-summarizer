@@ -81,8 +81,12 @@ async def create_summary(
 
     payload = SummarizeCreateForm(title=title, file_path=str(temp_file_path))
 
-    summary = await SummaryService(db).start_summary(
-        data=payload, user_id=current_user.id)
+    try:
+        summary = await SummaryService(db).start_summary(
+            data=payload, user_id=current_user.id)
+    except Exception:
+        temp_file_path.unlink(missing_ok=True)
+        raise
 
     # Hand off the heavy PDF summarization to a background worker.
     try:
