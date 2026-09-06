@@ -6,6 +6,7 @@ from openai import (
     APITimeoutError,
     AsyncOpenAI,
 )
+
 from app.core.config import settings
 
 LOG_PREVIEW_CHARS = 100

@@ -1,15 +1,17 @@
 import asyncio
+import re
 import time
 import uuid
-import fitz  # pymupdf
-import re
 from pathlib import Path
-from app.utils.prompts import CHUNK_PROMPT, SUMMARY_PROMPT
+
+import fitz  # pymupdf
 import tqdm
+
 from app.core.config import settings
-from app.services.ai_service import DeepSeekAIService
 from app.core.database import AsyncSessionLocal
 from app.models.summary import Summary, SummaryStatus
+from app.services.ai_service import DeepSeekAIService
+from app.utils.prompts import CHUNK_PROMPT, SUMMARY_PROMPT
 
 
 def build_chunk_prompt(text: str) -> str:

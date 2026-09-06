@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import DateTime, MetaData
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
-from sqlalchemy import Uuid
+from sqlalchemy import DateTime, MetaData, Uuid
 from sqlalchemy.ext.asyncio import (
     AsyncAttrs,
     AsyncSession,
@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
 from app.core.config import settings
-from collections.abc import AsyncGenerator
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -32,7 +32,7 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 def utcnow() -> datetime:
     """Timezone-aware "now"; used as a column default, never called at import."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class TimestampMixin:
@@ -60,17 +60,16 @@ AsyncSessionLocal = async_sessionmaker(
 
 async def init_db() -> None:
     """Create database tables for registered SQLAlchemy models."""
-    import app.models
 
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         try:
             yield session
-        except Exception as e:
+        except Exception:
             await session.rollback()
             raise
         finally:

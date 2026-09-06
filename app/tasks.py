@@ -1,5 +1,5 @@
-from app.taskiq_broker import broker
 from app.services.processor_service import process_summary
+from app.taskiq_broker import broker
 
 
 @broker.task

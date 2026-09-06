@@ -1,10 +1,11 @@
+from typing import Generic, TypeVar
+
 from pydantic import BaseModel
-from typing import Generic, TypeVar, Optional
 
 T = TypeVar("T")
 
 
 class ApiResponse(BaseModel, Generic[T]):
     message: str
-    data: Optional[T] = None
+    data: T | None = None
     success: bool = True

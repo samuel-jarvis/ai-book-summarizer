@@ -1,15 +1,23 @@
 import uuid
 from pathlib import Path
-from typing_extensions import Annotated
+from typing import Annotated
 
-from fastapi import APIRouter, Form, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from redis.exceptions import RedisError
 
-from app.schema.summary import SummarizeCreateForm, SummarizeResponse, SummarizeDetailResponse, SummarizeApiResponse, SummarizeDetailApiResponse, SummarizeListApiResponse, SummarizeUpdate
-from app.services.summary_service import SummaryService
 from app.api.deps import CurrentUser, DbSession
-from app.tasks import process_pdf_task
+from app.schema.summary import (
+    SummarizeApiResponse,
+    SummarizeCreateForm,
+    SummarizeDetailApiResponse,
+    SummarizeDetailResponse,
+    SummarizeListApiResponse,
+    SummarizeResponse,
+    SummarizeUpdate,
+)
+from app.services.summary_service import SummaryService
 from app.taskiq_broker import is_task_queue_available
+from app.tasks import process_pdf_task
 
 UPLOAD_DIR = Path("temp_uploads").resolve()
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB

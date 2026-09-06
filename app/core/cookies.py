@@ -1,4 +1,5 @@
 from fastapi import Response
+
 from app.core.config import settings
 
 REFRESH_COOKIE_PATH = f"{settings.API_V1_PREFIX}/auth"

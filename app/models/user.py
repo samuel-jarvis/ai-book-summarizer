@@ -1,8 +1,9 @@
-from enum import StrEnum
 import uuid
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
-from sqlalchemy import Enum, String, DateTime
+
+from sqlalchemy import DateTime, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, TimestampMixin

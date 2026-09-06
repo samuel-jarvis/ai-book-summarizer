@@ -2,7 +2,7 @@
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Any
 
@@ -35,7 +35,7 @@ def create_access_token(
     *, user_id: uuid.UUID, session_id: uuid.UUID
 ) -> tuple[str, datetime]:
     """Return a signed access token and the moment it expires."""
-    issued_at = datetime.now(timezone.utc)
+    issued_at = datetime.now(UTC)
     expires_at = issued_at + timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 

@@ -10,7 +10,6 @@ from app.core.exception import AuthenticationError
 from app.models.user import User
 from app.services.auth_service import AuthContext, AuthService
 
-
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 # auto_error=False so a missing header raises our own AppError and comes back

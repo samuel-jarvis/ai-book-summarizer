@@ -1,12 +1,13 @@
-from typing import Optional
 import uuid
+
 from pydantic import BaseModel, ConfigDict, Field
+
 from app.models.summary import SummaryStatus
 from app.schema.response import ApiResponse
 
 
 class SummarizeCreate(BaseModel):
-    title: Optional[str] = Field(default=None, min_length=3, max_length=255)
+    title: str | None = Field(default=None, min_length=3, max_length=255)
     source_text: str = Field(..., min_length=3)
 
 
@@ -19,12 +20,12 @@ class SummarizeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    title: Optional[str]
+    title: str | None
     status: SummaryStatus
 
 
 class SummarizeDetailResponse(SummarizeResponse):
-    content: Optional[str] = None
+    content: str | None = None
 
 
 class SummarizeUpdate(BaseModel):

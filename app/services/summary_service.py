@@ -8,9 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import utcnow
 from app.core.exception import NotFoundError, RateLimitError, ValidationError
-from app.schema.summary import SummarizeCreate, SummarizeCreateForm, SummarizeUpdate
-
 from app.models.summary import Summary, SummaryStatus
+from app.schema.summary import SummarizeCreate, SummarizeCreateForm, SummarizeUpdate
 from app.services.processor_service import extract_text_from_pdf
 
 MIN_SOURCE_CHARS = 10
