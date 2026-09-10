@@ -10,6 +10,8 @@ from app.core.database import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.auth_session import AuthSession
+    from app.models.document import Document
+    from app.models.project import Project
     from app.models.refresh_token import RefreshToken
     from app.models.summary import Summary
 
@@ -49,3 +51,5 @@ class User(TimestampMixin, Base):
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         back_populates="user", cascade="all, delete-orphan")
     summaries: Mapped[list["Summary"]] = relationship(back_populates="user")
+    documents: Mapped[list["Document"]] = relationship(back_populates="user")
+    projects: Mapped[list["Project"]] = relationship(back_populates="user")

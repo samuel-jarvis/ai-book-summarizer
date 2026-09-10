@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     SUMMARY_CHUNK_OVERLAP: int = 400
     SUMMARY_MAX_CONCURRENCY: int = 15
 
+    # Embedding / pgvector tuning. Must match the embedding model's output dim.
+    # Default 1536 matches OpenAI's text-embedding-3-small.
+    EMBEDDING_DIMENSION: int = 1536
+
     DEEPSEEK_TIMEOUT_SECONDS: float = 120.0
     DEEPSEEK_REDUCE_TIMEOUT_SECONDS: float = 300.0
     DEEPSEEK_MAX_RETRIES: int = 3
