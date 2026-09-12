@@ -77,6 +77,125 @@ Both belong to an `AuthSession`, which represents one credential grant — one s
 7. The worker saves the result and moves the record to `completed`; errors move it to `failed`.
 8. The client polls the detail endpoint and renders the finished Markdown-style response.
 
+## Run with Docker Compose
+
+Docker Desktop must be running with Linux containers enabled. The stack runs
+FastAPI, a Taskiq worker, Redis, and PostgreSQL 17 with pgvector. A one-shot
+Alembic service applies migrations before the API and worker start.
+
+1. Keep your existing `.env`. For a fresh checkout, copy `.env.example` to `.env`
+   and set `DEEPSEEK_API_KEY` and a random `SECRET_KEY` of at least 32 bytes.
+   Generate a secret with `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+2. Validate and start the stack:
+
+   ```powershell
+   docker compose config --quiet
+   docker compose up --build -d
+   docker compose ps -a
+   docker compose logs migrate
+   ```
+
+3. Open `http://localhost:8000/docs` or check
+   `http://localhost:8000/api/v1/health`. The migration service should exit with
+   code 0; the API, database, and Redis should become healthy. The health endpoint
+   checks the database and queue, not whether a worker is processing jobs.
+4. Run the frontend locally as usual. Its Vite `/api` proxy can target
+   `http://localhost:8000`. If calling the API directly from a browser, set
+   `BACKEND_CORS_ORIGINS` to the actual frontend origin and include credentials
+   for cookie-based authentication. Keep `ENVIRONMENT=development` for local HTTP.
+5. Submit a small PDF and follow the worker with `docker compose logs -f worker`.
+   This end-to-end check makes real requests using your DeepSeek account.
+
+The API and worker share an image but run separate commands. Compose overrides
+`DATABASE_URL` and `REDIS_URL` with internal `db:5432` and `redis:6379` addresses;
+the host URLs in `.env` remain available for running Python directly. The
+container database is new and does not import existing database data.
+
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` customize the local
+database (defaults are in `.env.example`). Use URL-safe values because they are
+embedded in the connection URL. These initialization settings only take effect
+on a new database volume; changing the password variable does not change an
+existing database user's password. The defaults are for local development.
+
+Only the API is published, on `127.0.0.1:8000`. Set `BACKEND_PORT` to use a
+different host port and update the frontend proxy accordingly. For SQL access:
+
+```powershell
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+For a desktop database client, add `ports: ["127.0.0.1:5433:5432"]` under `db`
+and connect to localhost port 5433. Redis and the worker need no host ports.
+
+Named volumes preserve PostgreSQL data, Redis append-only data, and API uploads.
+The worker reads extracted text from PostgreSQL and does not need the PDF volume.
+Queue persistence does not guarantee recovery of jobs interrupted mid-processing.
+
+Useful commands:
+
+```powershell
+docker compose logs -f api worker
+docker compose exec api alembic current
+docker compose up --build -d  # rebuild after code or dependency changes
+docker compose down         # stop services; retain data volumes
+```
+
+Source is copied into the image; edits require rebuilding. To explicitly apply
+new migrations to a running stack, use `docker compose run --rm migrate` after
+building the updated image. Avoid schema changes while jobs are running.
+`docker compose down -v` deletes the database, queue, and upload volumes.
+Credentials and local uploads are excluded from the image build context.
+
+### Development with automatic reload
+
+Use the development override for daily editing:
+
+```powershell
+docker compose -f compose.yaml -f compose.dev.yaml up --build -d
+docker compose -f compose.yaml -f compose.dev.yaml logs -f api worker
+```
+
+Python edits under `app/` automatically reload Uvicorn and restart the development
+worker. Polling is enabled for Windows Docker Desktop bind mounts. The worker
+runs one process and allows up to five minutes for active work to finish before
+forcing a restart, so reload may wait while a summary is processing. Use this
+mode for development jobs; forced restarts can interrupt unfinished summaries.
+
+Only source and migration paths are mounted. The image's Linux virtual environment
+and named upload volume remain in place. Source is read-only inside containers;
+edit it on your computer. The Alembic directory is writable so generated revisions
+are saved directly in your checkout for review and commit.
+
+Use the same two `-f` options for commands throughout your development session:
+
+```powershell
+# Open a shell or check the migration version.
+docker compose -f compose.yaml -f compose.dev.yaml exec api sh
+docker compose -f compose.yaml -f compose.dev.yaml exec api alembic current
+
+# After editing models, generate and review the migration locally.
+docker compose -f compose.yaml -f compose.dev.yaml exec api alembic revision --autogenerate -m "add book metadata"
+
+# Apply migration files; no image rebuild is needed for mounted source/migrations.
+docker compose -f compose.yaml -f compose.dev.yaml run --rm migrate
+
+# Add dependencies on the host, then rebuild the containers.
+uv add package-name
+docker compose -f compose.yaml -f compose.dev.yaml up --build -d
+
+# Stop the development stack while retaining data.
+docker compose -f compose.yaml -f compose.dev.yaml down
+```
+
+Reload does not apply schema changes automatically. Review autogenerated migrations
+and run the migration command explicitly. Rebuild after dependency changes; recreate
+containers with `up -d` after `.env` changes. Development dependency groups are still
+excluded from the image, so run development tools locally with `uv run`.
+
+The base and development configurations share the same database and volumes.
+To switch back to the image-only setup, run `docker compose -f compose.yaml up -d`.
+The frontend's backend address remains `http://localhost:8000` in both modes.
+
 ## Getting started
 
 ### Prerequisites

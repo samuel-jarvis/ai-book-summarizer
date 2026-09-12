@@ -1,0 +1,86 @@
+name: ai-book-summarizer
+
+x-app: &app
+  build: .
+  image: ai-book-summarizer:local
+  env_file: .env
+  environment:
+    # Service names resolve inside the Compose network; localhost does not point to the host.
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-book_user}:${POSTGRES_PASSWORD:-local_book_password}@db:5432/${POSTGRES_DB:-book_summarizer}
+    REDIS_URL: redis://redis:6379/0
+  init: true
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-book_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_book_password}
+      POSTGRES_DB: ${POSTGRES_DB:-book_summarizer}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-bookworm
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - uploads:/app/temp_uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, os, urllib.request; prefix = os.getenv('API_V1_PREFIX', '/api/v1'); data = json.load(urllib.request.urlopen('http://127.0.0.1:8000' + prefix + '/health', timeout=5)); assert data['status'] == 'healthy'"
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    <<: *app
+    command: ["taskiq", "worker", "app.taskiq_broker:broker", "app.tasks"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    stop_grace_period: 5m
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:

@@ -1,0 +1,29 @@
+# Opt in with: docker compose -f compose.yaml -f compose.dev.yaml up -d
+x-source: &source
+  - ./app:/app/app:ro
+  - ./alembic:/app/alembic
+  - ./alembic.ini:/app/alembic.ini:ro
+
+services:
+  api:
+    volumes: *source
+    environment:
+      ENVIRONMENT: development
+      # Windows bind mounts may not deliver native filesystem notifications.
+      WATCHFILES_FORCE_POLLING: "true"
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/app"]
+
+  worker:
+    volumes: *source
+    environment:
+      ENVIRONMENT: development
+      WATCHFILES_FORCE_POLLING: "true"
+    # watchfiles is already installed through FastAPI's standard dependencies.
+    # Allow active tasks time to finish before forcing a worker restart.
+    command: ["watchfiles", "--filter", "python", "--sigint-timeout", "300", "taskiq worker app.taskiq_broker:broker app.tasks --workers 1", "/app/app"]
+    stop_grace_period: 310s
+
+  migrate:
+    volumes: *source
+    environment:
+      ENVIRONMENT: development
