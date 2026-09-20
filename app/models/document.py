@@ -41,7 +41,7 @@ class EmbeddingStatus(enum.StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
 
-class SummaryStatus(enum.StrEnum):
+class DocumentSummaryStatus(enum.StrEnum):
     PENDING = "pending"
     STARTED = "started"
     COMPLETED = "completed"
@@ -99,17 +99,17 @@ class Document(TimestampMixin, Base):
     )
 
     # processing
-    embedding_status: Mapped[EmbeddingStatus | None] = mapped_column(
+    embedding_status: Mapped[EmbeddingStatus] = mapped_column(
         Enum(EmbeddingStatus, native_enum=False, length=20),
         default=EmbeddingStatus.PENDING,
-        nullable=True,
+        nullable=False,
         index=True,
     )
 
     # Current/latest generation; completed summaries remain separate history rows.
-    summary_status: Mapped[SummaryStatus] = mapped_column(
-        Enum(SummaryStatus, native_enum=False, length=20),
-        default=SummaryStatus.PENDING,
+    summary_status: Mapped[DocumentSummaryStatus] = mapped_column(
+        Enum(DocumentSummaryStatus, native_enum=False, length=20),
+        default=DocumentSummaryStatus.PENDING,
         nullable=False,
         index=True,
     )

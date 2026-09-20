@@ -72,6 +72,8 @@ services:
   worker:
     <<: *app
     command: ["taskiq", "worker", "app.taskiq_broker:broker", "app.tasks"]
+    volumes:
+      - uploads:/app/temp_uploads
     depends_on:
       migrate:
         condition: service_completed_successfully

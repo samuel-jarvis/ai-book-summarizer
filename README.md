@@ -420,3 +420,45 @@ The core summarization flow and authentication work. The following items remain 
 ## Author
 
 Built by [Samuel Jarvis](https://github.com/samuel-jarvis) as a full-stack portfolio project focused on asynchronous Python systems, AI integration, and practical product engineering.
+
+## LangChain embeddings and ORM vector storage
+
+LangChain loads and splits files and generates OpenAI embeddings. SQLAlchemy
+stores vectors in `document_embeddings`, grouped by `embedding_generations`.
+The service no longer uses `langchain_document_chunks` or creates tables at runtime.
+
+Set `OPENAI_API_KEY` in `.env`. The default model is `text-embedding-3-small`
+with 1536 dimensions. Apply the schema using `uv run alembic upgrade head`.
+The new migration also creates the previously unmigrated document/project tables;
+if those tables were created manually, reconcile that schema before applying it.
+Changing embedding dimensions requires a schema migration and re-indexing.
+
+```python
+from app.services.indexing.vector_store import VectorStoreService
+
+service = VectorStoreService(db, user_id=current_user.id)
+# A complete document batch; explicit IDs determine its scope.
+ids = await service.add_document_chunks(
+    chunks, document_id=document.id, project_id=project.id
+)
+await db.commit()  # The caller owns the transaction; roll back on failure.
+results = await service.similarity_search("What are the main ideas?", project_id=project.id)
+```
+
+The document and project must belong to the user and have a `project_documents`
+link. Embeddings belong to documents, so a document attached to multiple projects
+shares one active generation. Every nonempty indexing call replaces the active
+index for the entire document; do not submit individual parts of a document in
+separate calls. Empty batches leave the existing index unchanged.
+
+The service locks the document during indexing and saves chunks before switching
+the active generation in the same transaction. A savepoint rolls back failed
+builds without deactivating the previous generation. Failed attempts are not
+persisted as generation history. Successful older generations remain for now;
+document deletion cascades to their vectors. Search filters by ownership,
+project membership, active/completed generation, model, and dimensions.
+
+Source metadata is retained in JSONB; token counts and page ranges are recorded.
+Old LangChain tables are neither read nor deleted. If you populated them, re-index
+the original documents into the ORM store before removing those tables manually.
+Automatic upload indexing is not wired by this service change.

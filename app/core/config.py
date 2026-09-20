@@ -37,17 +37,40 @@ class Settings(BaseSettings):
 
     DAILY_SUMMARY_LIMIT: int = 3
 
+    # Character-based knobs for the legacy processor_service pipeline.
     SUMMARY_CHUNK_SIZE: int = 20000
     SUMMARY_CHUNK_OVERLAP: int = 400
     SUMMARY_MAX_CONCURRENCY: int = 15
 
+    CHUNK_ENCODING: str = "cl100k_base"
+    SUMMARY_CHUNK_TOKENS: int = 6000
+    SUMMARY_CHUNK_OVERLAP_TOKENS: int = 200
+
+    RAG_CHUNK_TOKENS: int = 800
+    RAG_CHUNK_OVERLAP_TOKENS: int = 120
+
     # Embedding / pgvector tuning. Must match the embedding model's output dim.
     # Default 1536 matches OpenAI's text-embedding-3-small.
     EMBEDDING_DIMENSION: int = 1536
+    OPENAI_API_KEY: str
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     DEEPSEEK_TIMEOUT_SECONDS: float = 120.0
     DEEPSEEK_REDUCE_TIMEOUT_SECONDS: float = 300.0
     DEEPSEEK_MAX_RETRIES: int = 3
+
+    @property
+    def rag_chunking_version(self) -> str:
+        """Identifies how a stored generation was split.
+
+        Stamped onto every EmbeddingGeneration, so changing the sizes above
+        makes existing generations identifiable as stale. Bump the trailing
+        version when the splitting strategy changes, not just its sizes.
+        """
+        return (
+            f"rag-{self.CHUNK_ENCODING}-{self.RAG_CHUNK_TOKENS}"
+            f"-{self.RAG_CHUNK_OVERLAP_TOKENS}-v1"
+        )
 
     @property
     def cookie_secure(self) -> bool:

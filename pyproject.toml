@@ -20,4 +20,24 @@ dependencies = [
     "taskiq>=0.12.4",
     "taskiq-redis>=1.2.3",
     "tqdm>=4.68.4",
+    "langchain>=1.4.0",
+    "langchain-community>=0.4.2",
+    "langchain-text-splitters>=1.1.2",
+    "langchain-openai>=1.6.2",
+    "pypdf>=6.18.1",
+    "tiktoken>=0.14.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The project is not installed as a package, so `app` is only importable when
+# the repository root is on sys.path -- the same job alembic.ini does with
+# prepend_sys_path.
+pythonpath = ["."]
+# The suite is unittest-based (IsolatedAsyncioTestCase handles its own event
+# loop), so pytest runs it natively and no asyncio plugin is required.

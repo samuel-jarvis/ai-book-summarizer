@@ -13,7 +13,7 @@ from app.core.types import PydanticJSONB
 if TYPE_CHECKING:
     from app.models.document import Document
 
-class SummaryType(enum.Enum):
+class SummaryType(enum.StrEnum):
     SHORT = "short"
     DETAILED = "detailed"
 
@@ -36,9 +36,9 @@ class DocumentSummary(TimestampMixin, Base):
 
     model: Mapped[str] = mapped_column(String(255))
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[str] = mapped_column(nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
     summary_type: Mapped[SummaryType] = mapped_column(
-        Enum(SummaryType),
+        Enum(SummaryType, native_enum=False, length=20),
         default=SummaryType.SHORT,
     )
 

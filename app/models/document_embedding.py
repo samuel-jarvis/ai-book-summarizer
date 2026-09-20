@@ -2,7 +2,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from pgvector.sqlalchemy import Vector
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 EMBEDDING_DIMENSION = settings.EMBEDDING_DIMENSION
 
 class DocumentEmbeddingMetadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     page_start: int | None = None
     page_end: int | None = None
     token_count: int
