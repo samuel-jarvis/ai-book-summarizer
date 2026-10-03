@@ -59,11 +59,14 @@ class VectorStoreService:
         """
         if not chunks:
             return []
+
         document_id = UUID(str(document_id))
         project_id = UUID(str(project_id))
+
         if any(not chunk.page_content.strip() for chunk in chunks):
             raise ValueError("Document chunks must contain non-empty text.")
         chunking_version = chunking_version or settings.rag_chunking_version
+
         if not chunking_version.strip() or len(chunking_version) > 100:
             raise ValueError("chunking_version must contain 1 to 100 characters.")
 
