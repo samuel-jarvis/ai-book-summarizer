@@ -1,4 +1,5 @@
 from app.models.auth_session import AuthSession
+from app.models.conversation import Conversation, ConversationMessage, ConversationRun
 from app.models.document import Document
 from app.models.document_embedding import DocumentEmbedding
 from app.models.document_summary import DocumentSummary
@@ -11,6 +12,9 @@ from app.models.user import User, UserStatus
 
 __all__ = [
     "AuthSession",
+    "Conversation",
+    "ConversationMessage",
+    "ConversationRun",
     "Document",
     "DocumentEmbedding",
     "DocumentSummary",
@@ -21,5 +25,5 @@ __all__ = [
     "Summary",
     "SummaryStatus",
     "User",
-    "UserStatus"
+    "UserStatus",
 ]
