@@ -1,6 +1,7 @@
 """Document embeddings stored through SQLAlchemy and PostgreSQL pgvector."""
 
 import math
+from collections.abc import Sequence
 from uuid import UUID, uuid4
 
 import tiktoken
@@ -144,9 +145,17 @@ class VectorStoreService:
             return [str(row.id) for row in rows]
 
     async def similarity_search(
-        self, query: str, *, project_id: UUID, k: int = 4
+        self,
+        query: str,
+        *,
+        project_id: UUID,
+        k: int = 4,
+        document_ids: Sequence[UUID] | None = None,
     ) -> list[LangChainDocument]:
-        """Return nearest chunks from active, compatible generations in an owned project."""
+        """Return nearest chunks from active, compatible generations in an owned project.
+
+        `document_ids` narrows the search; ids outside the project match nothing.
+        """
         if not query.strip() or k < 1:
             raise ValueError("Provide a non-empty query and a positive k.")
         project = await self.db.scalar(
@@ -159,8 +168,9 @@ class VectorStoreService:
             raise NotFoundError("Project not found.")
         vector = await embed_query(query)
         self._validate_vectors([vector], 1)
-        rows = await self.db.scalars(
-            select(DocumentEmbedding)
+        distance = DocumentEmbedding.embedding.cosine_distance(vector)
+        statement = (
+            select(DocumentEmbedding, Document.title, distance.label("distance"))
             .join(
                 EmbeddingGeneration,
                 EmbeddingGeneration.id == DocumentEmbedding.generation_id,
@@ -177,27 +187,29 @@ class VectorStoreService:
                 EmbeddingGeneration.model == settings.EMBEDDING_MODEL,
                 EmbeddingGeneration.dimensions == settings.EMBEDDING_DIMENSION,
             )
-            .order_by(
-                DocumentEmbedding.embedding.cosine_distance(vector),
-                DocumentEmbedding.id,
-            )
+            .order_by(distance, DocumentEmbedding.id)
             .limit(k)
         )
+        if document_ids is not None:
+            statement = statement.where(Document.id.in_(document_ids))
+        rows = (await self.db.execute(statement)).all()
         return [
             LangChainDocument(
-                id=str(row.id),
-                page_content=row.content,
+                id=str(chunk.id),
+                page_content=chunk.content,
                 metadata={
                     **(
-                        row.embedding_metadata.model_dump()
-                        if row.embedding_metadata
+                        chunk.embedding_metadata.model_dump()
+                        if chunk.embedding_metadata
                         else {}
                     ),
-                    "document_id": str(row.document_id),
+                    "document_id": str(chunk.document_id),
+                    "document_title": title,
                     "project_id": str(project_id),
-                    "generation_id": str(row.generation_id),
-                    "chunk_index": row.chunk_index,
+                    "generation_id": str(chunk.generation_id),
+                    "chunk_index": chunk.chunk_index,
+                    "cosine_distance": float(distance),
                 },
             )
-            for row in rows
+            for chunk, title, distance in rows
         ]
