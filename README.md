@@ -409,6 +409,8 @@ The core summarization flow and authentication work. The following items remain 
 
 ## Engineering notes
 
+- Conversation services now support [budgeted history and query rewriting](docs/conversation-history-and-rewriting.md), with audit data saved on each run. Final answer context assembly follows in a separate step.
+
 - Uploaded files, `.env`, virtual environments, and build artifacts are intentionally ignored.
 - The default AI model is configured in `DeepSeekAIService`; validate model availability before deployment.
 - Summary generation is sequential per chunk today. Concurrency should be introduced only alongside provider rate-limit and cost controls.

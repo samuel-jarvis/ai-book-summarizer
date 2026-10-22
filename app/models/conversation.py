@@ -74,7 +74,9 @@ class PromptMessageSnapshot(BaseModel):
 class RunSnapshot(BaseModel):
     """Inputs captured before generation; do not rebuild from current documents."""
 
-    # Exact input to the query rewriter; empty when rewriting was skipped (turn 1).
+    # Budgeted memory and completed exchanges, also available to the context builder.
+    history_messages: list[PromptMessageSnapshot] = Field(default_factory=list)
+    # Exact input to the query rewriter; empty when no history was available.
     rewrite_prompt_messages: list[PromptMessageSnapshot] = Field(default_factory=list)
     retrieval_candidates: list[CandidateSnapshot] = Field(default_factory=list)
     selected_sources: list[SourceSnapshot] = Field(default_factory=list)

@@ -5,6 +5,11 @@ project as the run's sources. It wraps `VectorStoreService.similarity_search`,
 which checks project ownership, embeds the query, and searches only active,
 completed generations that match the configured embedding model and dimensions.
 
+Prepare `rewritten_query` using the
+[conversation history and rewriting step](conversation-history-and-rewriting.md)
+before retrieval. That step checkpoints the query separately from the original
+user message and retains the budgeted history for the later context builder.
+
 ```python
 async with AsyncSessionLocal() as db:
     result = await RetrievalService(db, user_id).retrieve(

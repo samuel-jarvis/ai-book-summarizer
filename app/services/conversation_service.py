@@ -5,7 +5,7 @@ external work. No method calls a provider or keeps a transaction across inferenc
 All turn mutations lock the conversation first, including cancellation and retries.
 """
 
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
@@ -23,6 +23,9 @@ from app.models.conversation import (
     RunStatus,
 )
 from app.models.project import Project
+
+if TYPE_CHECKING:
+    from app.services.query_rewrite_service import RewriteResult
 
 ACTIVE_STATUSES = (RunStatus.PENDING, RunStatus.RUNNING)
 
@@ -250,7 +253,9 @@ class ConversationService:
         rewritten_query: str | None = None,
         rewrite_model: str | None = None,
         response_text: str | None = None,
+        rewrite_result: "RewriteResult | None" = None,
     ) -> ConversationRun:
+        """Save stage output under a lock, merging rewrite audit data when supplied."""
         run = await self._locked_run(run_id)
         if run.status != RunStatus.RUNNING:
             raise ConflictError("Only a running attempt can receive checkpoints.")
@@ -266,6 +271,22 @@ class ConversationService:
         }.items():
             if value is not None:
                 setattr(run, name, value)
+        if rewrite_result is not None:
+            snapshot = run.snapshot.model_copy(deep=True)
+            snapshot.history_messages = [
+                message.model_copy(deep=True)
+                for message in rewrite_result.history.messages
+            ]
+            snapshot.rewrite_prompt_messages = [
+                message.model_copy(deep=True)
+                for message in rewrite_result.prompt_messages
+            ]
+            metrics = run.metrics.model_copy(deep=True)
+            metrics.rewrite_fallback = rewrite_result.fallback
+            run.snapshot = snapshot
+            run.metrics = metrics
+            run.rewritten_query = rewrite_result.query
+            run.rewrite_model = rewrite_result.model
         await self.db.flush()
         return run
 

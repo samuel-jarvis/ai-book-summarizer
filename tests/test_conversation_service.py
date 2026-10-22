@@ -8,6 +8,7 @@ import importlib.util
 import os
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from alembic.migration import MigrationContext
@@ -28,6 +29,9 @@ from app.models.conversation import (
 from app.models.project import Project
 from app.models.user import User
 from app.services.conversation_service import ConversationService
+from app.services.history_service import HistoryService
+from app.services.llm.llm_service import LLMService
+from app.services.query_rewrite_service import QueryRewriteService
 
 
 @unittest.skipUnless(os.getenv("CHAT_TEST_DATABASE_URL"), "PostgreSQL URL not supplied")
@@ -256,6 +260,208 @@ class ConversationServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(results[0].run.id, results[1].run.id)
         self.assertEqual(sum(result.reused for result in results), 1)
+
+    async def completed_turn(self, question, answer):
+        """Create a successful exchange with no provider calls."""
+        turn = await self.reserve(question)
+        async with self.sessions.begin() as db:
+            service = ConversationService(db, self.user_id)
+            await service.start_run(turn.run.id, model="test", pipeline_version="v1")
+            await service.complete(turn.run.id, answer)
+        return turn
+
+    async def test_history_excludes_failed_cancelled_empty_and_current_turns(self):
+        """History uses completed pairs only and respects owner and turn boundaries."""
+        failed = await self.reserve("Failed question")
+        async with self.sessions.begin() as db:
+            service = ConversationService(db, self.user_id)
+            await service.start_run(failed.run.id, model="test", pipeline_version="v1")
+            await service.checkpoint(
+                failed.run.id,
+                stage="generating",
+                response_text="Partial failed response",
+            )
+            await service.fail(failed.run.id, "test_failure")
+        await self.completed_turn(
+            "Compare Book A and Book B habits", "Book B emphasizes repetition."
+        )
+        cancelled = await self.reserve("Cancelled question")
+        async with self.sessions.begin() as db:
+            await ConversationService(db, self.user_id).cancel(cancelled.run.id)
+        empty = await self.completed_turn("Empty assistant", "Initially valid")
+        async with self.sessions.begin() as db:
+            assistant = await db.get(ConversationMessage, empty.assistant_message.id)
+            assistant.content = " \n\t "
+        current = await self.reserve("What about the second book?")
+        async with self.sessions() as db:
+            history = await HistoryService(db, self.user_id).load(
+                self.conversation_id, before_position=current.user_message.position
+            )
+            self.assertEqual(
+                [m.content for m in history.messages],
+                ["Compare Book A and Book B habits", "Book B emphasizes repetition."],
+            )
+            with self.assertRaises(NotFoundError):
+                await HistoryService(db, self.other_id).load(
+                    self.conversation_id, before_position=current.user_message.position
+                )
+
+    async def test_history_includes_successful_retry_once_and_limits_recent_pairs(self):
+        """Failed retry attempts add no history and the row limit selects recent pairs."""
+        await self.completed_turn("Old topic", "Old answer")
+        turn = await self.reserve("Book B habits?")
+        async with self.sessions.begin() as db:
+            service = ConversationService(db, self.user_id)
+            await service.fail(turn.run.id, "test_failure")
+            retry = await service.retry(turn.run.id)
+            await service.start_run(retry.id, model="test", pipeline_version="v1")
+            await service.complete(retry.id, "Book B uses repetition.")
+        async with self.sessions() as db:
+            history = await HistoryService(db, self.user_id).load(
+                self.conversation_id, before_position=5, max_exchanges=1
+            )
+            self.assertEqual(
+                [m.content for m in history.messages],
+                ["Book B habits?", "Book B uses repetition."],
+            )
+
+    async def test_history_memory_boundary_and_oversized_memory(self):
+        """Included memory replaces covered turns; omitted memory leaves them available."""
+        first = await self.completed_turn("First topic", "First answer")
+        await self.completed_turn("Recent topic", "Recent answer")
+        async with self.sessions.begin() as db:
+            conversation = await ConversationService(db, self.user_id).get(
+                self.conversation_id
+            )
+            conversation.memory_summary = "Earlier topic: first book."
+            conversation.memory_through_position = first.assistant_message.position
+        async with self.sessions() as db:
+            history = await HistoryService(db, self.user_id).load(
+                self.conversation_id, before_position=5
+            )
+            self.assertEqual(len(history.messages), 3)
+            self.assertEqual(
+                [m.content for m in history.messages[1:]],
+                ["Recent topic", "Recent answer"],
+            )
+        async with self.sessions.begin() as db:
+            conversation = await ConversationService(db, self.user_id).get(
+                self.conversation_id
+            )
+            conversation.memory_summary = "Oversized memory " * 1000
+        async with self.sessions() as db:
+            history = await HistoryService(db, self.user_id).load(
+                self.conversation_id, before_position=5, token_budget=100
+            )
+            self.assertEqual(
+                [m.content for m in history.messages],
+                ["First topic", "First answer", "Recent topic", "Recent answer"],
+            )
+
+    async def test_rewrite_run_persists_inputs_and_preserves_user_message(self):
+        """The rewrite is saved separately and unrelated snapshot/metrics fields survive."""
+        await self.completed_turn(
+            "Compare Book A and Book B habits", "The second book is Book B."
+        )
+        question = "  What about the second book?  "
+        turn = await self.reserve(question)
+        async with self.sessions.begin() as db:
+            service = ConversationService(db, self.user_id)
+            await service.start_run(
+                turn.run.id, model="answer-test", pipeline_version="v1"
+            )
+            run = await service.get_run(turn.run.id)
+            snapshot = run.snapshot.model_copy(deep=True)
+            snapshot.prompt_messages = [
+                PromptMessageSnapshot(role="human", content="Keep this")
+            ]
+            metrics = run.metrics.model_copy(deep=True)
+            metrics.stage_durations_ms = {"previous": 5.0}
+            await service.checkpoint(
+                turn.run.id, stage="starting", snapshot=snapshot, metrics=metrics
+            )
+        llm = LLMService(model="rewrite-test")
+        llm.generate = AsyncMock(
+            return_value='{"status":"ready","query":"How does Book B explain habit formation?"}'
+        )
+        result = await QueryRewriteService(llm).rewrite_run(
+            turn.run.id, self.user_id, sessions=self.sessions
+        )
+        async with self.sessions() as db:
+            run = await ConversationService(db, self.user_id).get_run(turn.run.id)
+            self.assertEqual(run.rewritten_query, result.query)
+            self.assertEqual(run.rewrite_model, "rewrite-test")
+            self.assertEqual(
+                run.snapshot.rewrite_prompt_messages, result.prompt_messages
+            )
+            self.assertEqual(run.snapshot.history_messages, result.history.messages)
+            self.assertEqual(run.snapshot.prompt_messages[0].content, "Keep this")
+            self.assertEqual(run.metrics.stage_durations_ms, {"previous": 5.0})
+            self.assertFalse(run.metrics.rewrite_fallback)
+            self.assertEqual(run.stage, "rewritten")
+            self.assertEqual(
+                (await db.get(ConversationMessage, turn.user_message.id)).content,
+                question,
+            )
+
+    async def test_rewrite_run_saves_fallback_and_skips_first_turn(self):
+        """First turns skip the model; later ambiguous output is persisted as fallback."""
+        first = await self.reserve("First question")
+        llm = LLMService(model="rewrite-test")
+        llm.generate = AsyncMock(return_value='{"status":"ambiguous","query":""}')
+        service = QueryRewriteService(llm)
+        async with self.sessions.begin() as db:
+            await ConversationService(db, self.user_id).start_run(
+                first.run.id, model="test", pipeline_version="v1"
+            )
+        await service.rewrite_run(first.run.id, self.user_id, sessions=self.sessions)
+        llm.generate.assert_not_awaited()
+        async with self.sessions.begin() as db:
+            run = await ConversationService(db, self.user_id).get_run(first.run.id)
+            self.assertEqual(run.rewritten_query, "First question")
+            self.assertIsNone(run.rewrite_model)
+            self.assertEqual(run.snapshot.rewrite_prompt_messages, [])
+            await ConversationService(db, self.user_id).complete(
+                first.run.id, "First answer"
+            )
+        second = await self.reserve("What does it mean?")
+        async with self.sessions.begin() as db:
+            await ConversationService(db, self.user_id).start_run(
+                second.run.id, model="test", pipeline_version="v1"
+            )
+        await service.rewrite_run(second.run.id, self.user_id, sessions=self.sessions)
+        async with self.sessions() as db:
+            run = await ConversationService(db, self.user_id).get_run(second.run.id)
+            self.assertTrue(run.metrics.rewrite_fallback)
+            self.assertEqual(run.rewritten_query, "What does it mean?")
+            self.assertEqual(run.rewrite_model, "rewrite-test")
+            self.assertTrue(run.snapshot.rewrite_prompt_messages)
+
+    async def test_cancel_during_rewrite_rejects_stale_checkpoint(self):
+        """A cancelled attempt cannot receive a rewrite that finishes later."""
+        await self.completed_turn("Book B habits", "Book B uses repetition.")
+        turn = await self.reserve("And the second book?")
+        async with self.sessions.begin() as db:
+            await ConversationService(db, self.user_id).start_run(
+                turn.run.id, model="test", pipeline_version="v1"
+            )
+
+        async def cancel_then_return(*args):
+            """Simulate cancellation while no inference transaction is held open."""
+            async with self.sessions.begin() as db:
+                await ConversationService(db, self.user_id).cancel(turn.run.id)
+            return '{"status":"ready","query":"Book B habits"}'
+
+        llm = LLMService(model="rewrite-test")
+        llm.generate = AsyncMock(side_effect=cancel_then_return)
+        with self.assertRaises(ConflictError):
+            await QueryRewriteService(llm).rewrite_run(
+                turn.run.id, self.user_id, sessions=self.sessions
+            )
+        async with self.sessions() as db:
+            run = await ConversationService(db, self.user_id).get_run(turn.run.id)
+            self.assertEqual(run.status, RunStatus.CANCELLED)
+            self.assertIsNone(run.rewritten_query)
 
 
 if __name__ == "__main__":
