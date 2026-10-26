@@ -409,7 +409,7 @@ The core summarization flow and authentication work. The following items remain 
 
 ## Engineering notes
 
-- Conversation services now support [budgeted history and query rewriting](docs/conversation-history-and-rewriting.md), with audit data saved on each run. Final answer context assembly follows in a separate step.
+- The [conversation API](docs/conversation-api.md) connects history, query rewriting, retrieval, context assembly, and answer generation through the task worker. It supports frontend polling, message history, sources, cancellation, and retries.
 
 - Uploaded files, `.env`, virtual environments, and build artifacts are intentionally ignored.
 - The default AI model is configured in `DeepSeekAIService`; validate model availability before deployment.

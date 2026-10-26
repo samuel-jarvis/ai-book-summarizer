@@ -25,6 +25,7 @@ from app.models.conversation import (
 from app.models.project import Project
 
 if TYPE_CHECKING:
+    from app.services.answer_context_service import AnswerContext
     from app.services.query_rewrite_service import RewriteResult
 
 ACTIVE_STATUSES = (RunStatus.PENDING, RunStatus.RUNNING)
@@ -146,6 +147,56 @@ class ConversationService:
             raise NotFoundError("Run not found.")
         return run
 
+    async def list_runs(
+        self, conversation_id: UUID, *, limit: int = 50, offset: int = 0
+    ) -> list[ConversationRun]:
+        """List owned attempts newest first, including earlier failed retries."""
+        self._pagination(limit, offset)
+        await self.get(conversation_id)
+        return list(
+            await self.db.scalars(
+                select(ConversationRun)
+                .where(ConversationRun.conversation_id == conversation_id)
+                .order_by(ConversationRun.created_at.desc(), ConversationRun.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+
+    async def latest_message_runs(
+        self, conversation_id: UUID, messages: list[ConversationMessage]
+    ) -> dict[UUID, ConversationRun]:
+        """Fetch the latest attempt for each visible assistant message in one query."""
+        await self.get(conversation_id)
+        assistant_ids = [
+            message.id for message in messages if message.role == MessageRole.ASSISTANT
+        ]
+        if not assistant_ids:
+            return {}
+        runs = await self.db.scalars(
+            select(ConversationRun)
+            .where(
+                ConversationRun.conversation_id == conversation_id,
+                ConversationRun.assistant_message_id.in_(assistant_ids),
+            )
+            .order_by(ConversationRun.attempt_number.desc())
+        )
+        latest = {}
+        for run in runs:
+            latest.setdefault(run.assistant_message_id, run)
+        return latest
+
+    async def fail_if_active(
+        self, run_id: UUID, error_code: str, *, pending_only: bool = False
+    ) -> ConversationRun:
+        """Record a workflow failure without overwriting a finished or claimed attempt."""
+        run = await self._locked_run(run_id)
+        if run.status not in ACTIVE_STATUSES or (
+            pending_only and run.status != RunStatus.PENDING
+        ):
+            return run
+        return await self.fail(run_id, error_code)
+
     async def _locked_run(self, run_id: UUID) -> ConversationRun:
         run = await self.get_run(run_id)
         await self.get(run.conversation_id, lock=True)
@@ -254,13 +305,28 @@ class ConversationService:
         rewrite_model: str | None = None,
         response_text: str | None = None,
         rewrite_result: "RewriteResult | None" = None,
+        answer_context: "AnswerContext | None" = None,
     ) -> ConversationRun:
-        """Save stage output under a lock, merging rewrite audit data when supplied."""
+        """Save stage output under a lock, merging rewrite or answer context audit data."""
         run = await self._locked_run(run_id)
         if run.status != RunStatus.RUNNING:
             raise ConflictError("Only a running attempt can receive checkpoints.")
         if not stage.strip() or len(stage) > 50:
             raise ValidationError("Stage must contain 1 to 50 characters.")
+        if run.stage == "generating" and (
+            stage != "generating"
+            or any(
+                value is not None
+                for value in (
+                    snapshot,
+                    rewritten_query,
+                    rewrite_model,
+                    rewrite_result,
+                    answer_context,
+                )
+            )
+        ):
+            raise ConflictError("Answer inputs cannot change after generation starts.")
         run.stage = stage
         for name, value in {
             "snapshot": snapshot,
@@ -287,12 +353,38 @@ class ConversationService:
             run.metrics = metrics
             run.rewritten_query = rewrite_result.query
             run.rewrite_model = rewrite_result.model
+        if answer_context is not None:
+            run.snapshot = answer_context.to_run_snapshot(run.snapshot)
+        await self.db.flush()
+        return run
+
+    async def claim_generation(
+        self, run_id: UUID, *, model: str | None = None
+    ) -> ConversationRun:
+        """Claim a context-ready attempt once before committing and calling the model."""
+        run = await self._locked_run(run_id)
+        if run.status != RunStatus.RUNNING or run.stage != "context_ready":
+            raise ConflictError(
+                "Only a context-ready running attempt can generate an answer."
+            )
+        if not run.snapshot.prompt_messages or run.snapshot.answer_token_budget is None:
+            raise ValidationError("Assemble and save answer context before generation.")
+        selected_model = model if model is not None else run.model
+        if (
+            not selected_model
+            or not selected_model.strip()
+            or len(selected_model) > 255
+        ):
+            raise ValidationError("Provide an answer model with 1 to 255 characters.")
+        run.stage = "generating"
+        run.model = selected_model
         await self.db.flush()
         return run
 
     async def complete(
         self, run_id: UUID, response_text: str, *, metrics: RunMetrics | None = None
     ) -> ConversationRun:
+        """Atomically publish a nonempty answer and finish a still-running attempt."""
         run = await self._locked_run(run_id)
         if run.status != RunStatus.RUNNING:
             raise ConflictError("Only a running attempt can complete.")

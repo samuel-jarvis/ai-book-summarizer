@@ -50,6 +50,8 @@ def load_document(file_path: Path, *, document_id: str | None = None, project_id
     documents = loader.load()
 
     for doc in documents:
+        # PostgreSQL text columns reject NUL bytes, which some PDFs emit.
+        doc.page_content = doc.page_content.replace("\x00", "")
         doc.metadata.update (
             {
                 "document_id": document_id,

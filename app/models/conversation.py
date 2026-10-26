@@ -82,6 +82,9 @@ class RunSnapshot(BaseModel):
     selected_sources: list[SourceSnapshot] = Field(default_factory=list)
     # Fully rendered, ordered model input: system instructions, history, context.
     prompt_messages: list[PromptMessageSnapshot] = Field(default_factory=list)
+    # Local estimates and reserved output space; provider usage lives in RunMetrics.
+    prompt_token_estimate: int | None = Field(default=None, ge=0)
+    answer_token_budget: int | None = Field(default=None, gt=0)
 
 
 class RunMetrics(BaseModel):

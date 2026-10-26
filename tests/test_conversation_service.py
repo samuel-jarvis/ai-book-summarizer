@@ -9,10 +9,13 @@ import os
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import httpx
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from langchain_core.documents import Document
+from langchain_core.messages import AIMessage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -28,10 +31,16 @@ from app.models.conversation import (
 )
 from app.models.project import Project
 from app.models.user import User
+from app.services.answer_context_service import AnswerContextService
+from app.services.answer_generation_service import (
+    AnswerGenerationError,
+    AnswerGenerationService,
+)
 from app.services.conversation_service import ConversationService
-from app.services.history_service import HistoryService
+from app.services.history_service import HistoryService, budget_history
 from app.services.llm.llm_service import LLMService
 from app.services.query_rewrite_service import QueryRewriteService
+from app.services.retrieval_service import RetrievalResult, to_source
 
 
 @unittest.skipUnless(os.getenv("CHAT_TEST_DATABASE_URL"), "PostgreSQL URL not supplied")
@@ -462,6 +471,430 @@ class ConversationServiceTests(unittest.IsolatedAsyncioTestCase):
             run = await ConversationService(db, self.user_id).get_run(turn.run.id)
             self.assertEqual(run.status, RunStatus.CANCELLED)
             self.assertIsNone(run.rewritten_query)
+
+    async def test_answer_context_checkpoint_reloads_exact_prompt_and_sources(self):
+        """The database stores the final input independently of rewrite and message text."""
+        turn = await self.reserve("  How does Book B explain habits? {literal}  ")
+        history = budget_history([("Book B habits?", "Book B emphasizes practice.")])
+        async with self.sessions.begin() as db:
+            service = ConversationService(db, self.user_id)
+            await service.start_run(turn.run.id, model="test", pipeline_version="v1")
+            await service.checkpoint(
+                turn.run.id,
+                stage="rewritten",
+                rewritten_query="Book B habit formation",
+                snapshot=RunSnapshot(
+                    history_messages=history.messages,
+                    rewrite_prompt_messages=[
+                        PromptMessageSnapshot(
+                            role="human", content="Saved rewrite input"
+                        )
+                    ],
+                ),
+            )
+        document = Document(
+            id=str(uuid4()),
+            page_content="Habits develop through repeated practice.",
+            metadata={
+                "document_id": str(uuid4()),
+                "generation_id": str(uuid4()),
+                "document_title": "Book B",
+                "chunk_index": 0,
+                "page_start": 0,
+                "page_end": 1,
+                "cosine_distance": 0.1,
+            },
+        )
+        retrieval = RetrievalResult([document], [to_source(document, "S1")])
+        context = await AnswerContextService().assemble_run(
+            turn.run.id, self.user_id, retrieval, sessions=self.sessions
+        )
+        async with self.sessions() as db:
+            run = await ConversationService(db, self.user_id).get_run(turn.run.id)
+            self.assertEqual(run.stage, "context_ready")
+            self.assertEqual(run.snapshot.prompt_messages, context.messages)
+            self.assertEqual(run.snapshot.selected_sources, context.sources)
+            self.assertTrue(run.snapshot.retrieval_candidates[0].selected)
+            self.assertEqual(run.snapshot.history_messages, history.messages)
+            self.assertEqual(
+                run.snapshot.rewrite_prompt_messages[0].content, "Saved rewrite input"
+            )
+            self.assertEqual(run.snapshot.prompt_token_estimate, context.token_count)
+            self.assertEqual(run.snapshot.answer_token_budget, 2000)
+            self.assertEqual(run.rewritten_query, "Book B habit formation")
+            self.assertEqual(
+                (await db.get(ConversationMessage, turn.user_message.id)).content,
+                "  How does Book B explain habits? {literal}  ",
+            )
+            self.assertEqual(
+                (await db.get(ConversationMessage, turn.assistant_message.id)).content,
+                "",
+            )
+
+    async def context_ready_turn(self):
+        """Create an assembled attempt using actual context persistence and no evidence calls."""
+        turn = await self.reserve("How does Book B explain habit formation?")
+        async with self.sessions.begin() as db:
+            await ConversationService(db, self.user_id).start_run(
+                turn.run.id, model="test-answer", pipeline_version="v1"
+            )
+        await AnswerContextService().assemble_run(
+            turn.run.id, self.user_id, RetrievalResult([], []), sessions=self.sessions
+        )
+        return turn
+
+    async def test_generated_answer_and_reported_usage_reload(self):
+        """Successful generation atomically publishes the assistant and persists provider usage."""
+        turn = await self.context_ready_turn()
+        llm = LLMService(model="test-answer")
+        llm.generate_response = AsyncMock(
+            return_value=AIMessage(
+                content="Please provide the book passage so I can explain its approach.",
+                response_metadata={"finish_reason": "stop"},
+                usage_metadata={
+                    "input_tokens": 100,
+                    "output_tokens": 15,
+                    "total_tokens": 115,
+                },
+            )
+        )
+        service = AnswerGenerationService(llm)
+        with self.assertRaises(NotFoundError):
+            await service.generate_run(
+                turn.run.id, self.other_id, sessions=self.sessions
+            )
+        llm.generate_response.assert_not_awaited()
+        answer = await service.generate_run(
+            turn.run.id, self.user_id, sessions=self.sessions
+        )
+        async with self.sessions() as db:
+            run = await ConversationService(db, self.user_id).get_run(turn.run.id)
+            self.assertEqual(run.status, RunStatus.COMPLETED)
+            self.assertEqual(run.response_text, answer)
+            self.assertEqual(run.metrics.input_tokens, 100)
+            self.assertEqual(run.metrics.output_tokens, 15)
+            self.assertEqual(run.metrics.finish_reason, "stop")
+            self.assertEqual(run.model, "test-answer")
+            self.assertEqual(
+                (await db.get(ConversationMessage, turn.assistant_message.id)).content,
+                answer,
+            )
+            self.assertEqual(
+                (await db.get(ConversationMessage, turn.user_message.id)).content,
+                "How does Book B explain habit formation?",
+            )
+            self.assertTrue(run.snapshot.prompt_messages)
+
+    async def test_generation_failure_preserves_placeholder_and_can_be_retried(self):
+        """A failed attempt stores a safe code; retry generates into the existing assistant slot."""
+        turn = await self.context_ready_turn()
+        llm = LLMService(model="test-answer")
+        llm.generate_response = AsyncMock(
+            side_effect=RuntimeError("private provider details")
+        )
+        with self.assertRaises(AnswerGenerationError):
+            await AnswerGenerationService(llm).generate_run(
+                turn.run.id, self.user_id, sessions=self.sessions
+            )
+        async with self.sessions.begin() as db:
+            service = ConversationService(db, self.user_id)
+            failed = await service.get_run(turn.run.id)
+            self.assertEqual(failed.status, RunStatus.FAILED)
+            self.assertEqual(failed.error_code, "answer_generation_failed")
+            self.assertEqual(
+                (await db.get(ConversationMessage, turn.assistant_message.id)).content,
+                "",
+            )
+            retry = await service.retry(turn.run.id)
+            await service.start_run(
+                retry.id, model="test-answer", pipeline_version="v1"
+            )
+        await AnswerContextService().assemble_run(
+            retry.id, self.user_id, RetrievalResult([], []), sessions=self.sessions
+        )
+        llm.generate_response = AsyncMock(
+            return_value=AIMessage(content="Which passage should I explain?")
+        )
+        answer = await AnswerGenerationService(llm).generate_run(
+            retry.id, self.user_id, sessions=self.sessions
+        )
+        async with self.sessions() as db:
+            self.assertEqual(
+                (await db.get(ConversationMessage, turn.assistant_message.id)).content,
+                answer,
+            )
+            self.assertEqual(
+                (
+                    await ConversationService(db, self.user_id).get_run(turn.run.id)
+                ).status,
+                RunStatus.FAILED,
+            )
+            self.assertEqual(
+                (await ConversationService(db, self.user_id).get_run(retry.id)).status,
+                RunStatus.COMPLETED,
+            )
+
+    async def test_concurrent_generation_calls_claim_the_attempt_once(self):
+        """Database locking lets only one worker call the provider for a ready attempt."""
+        turn = await self.context_ready_turn()
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def respond_after_release(*args, **kwargs):
+            """Hold inference open while another worker attempts the same claim."""
+            started.set()
+            await release.wait()
+            return AIMessage(content="Please provide evidence for Book B.")
+
+        llm = LLMService(model="test-answer")
+        llm.generate_response = AsyncMock(side_effect=respond_after_release)
+        service = AnswerGenerationService(llm)
+        first = asyncio.create_task(
+            service.generate_run(turn.run.id, self.user_id, sessions=self.sessions)
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=10)
+            with self.assertRaises(ConflictError):
+                await service.generate_run(
+                    turn.run.id, self.user_id, sessions=self.sessions
+                )
+        finally:
+            release.set()
+            await first
+        llm.generate_response.assert_awaited_once()
+
+    async def test_cancellation_during_answer_generation_prevents_publication(self):
+        """A committed user cancellation rejects the model's later answer."""
+        turn = await self.context_ready_turn()
+
+        async def cancel_and_respond(*args, **kwargs):
+            """Cancel from a separate transaction while no inference transaction is open."""
+            async with self.sessions.begin() as db:
+                await ConversationService(db, self.user_id).cancel(turn.run.id)
+            return AIMessage(content="Late answer")
+
+        llm = LLMService(model="test-answer")
+        llm.generate_response = AsyncMock(side_effect=cancel_and_respond)
+        with self.assertRaises(ConflictError):
+            await AnswerGenerationService(llm).generate_run(
+                turn.run.id, self.user_id, sessions=self.sessions
+            )
+        async with self.sessions() as db:
+            run = await ConversationService(db, self.user_id).get_run(turn.run.id)
+            self.assertEqual(run.status, RunStatus.CANCELLED)
+            self.assertIsNone(run.response_text)
+            self.assertEqual(
+                (await db.get(ConversationMessage, turn.assistant_message.id)).content,
+                "",
+            )
+
+    async def test_conversation_http_pipeline_and_queue_failure_recovery(self):
+        """Exercise real HTTP routes and all pipeline stages against PostgreSQL with fake providers."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from app.api.deps import get_current_user
+        from app.core.database import get_db
+        from app.main import app
+        from app.services.conversation_pipeline import ConversationPipeline
+
+        overrides = app.dependency_overrides.copy()
+        identity = {"user_id": self.user_id}
+
+        async def database():
+            """Use independent real PostgreSQL sessions for each HTTP request."""
+            async with self.sessions() as db:
+                yield db
+
+        async def current_user():
+            """Keep HTTP authentication deterministic while exercising real ownership checks."""
+            return SimpleNamespace(id=identity["user_id"])
+
+        async def provider_response(prompt, values, **options):
+            """Return deterministic rewrite JSON or a cited answer without paid inference."""
+            if options.get("max_tokens"):
+                return AIMessage(
+                    content="Book B emphasizes repeated practice [S1].",
+                    response_metadata={"finish_reason": "stop"},
+                )
+            return AIMessage(
+                content='{"status":"ready","query":"Book B habit formation through repetition"}'
+            )
+
+        llm = LLMService(model="test-pipeline")
+        llm.generate_response = AsyncMock(side_effect=provider_response)
+        pipeline = ConversationPipeline(sessions=self.sessions, llm=llm)
+
+        async def dispatch(run_id, user_id):
+            """Execute the queued task inline with independent pipeline sessions for this test."""
+            await pipeline.process(UUID(run_id), UUID(user_id))
+
+        document = Document(
+            id=str(uuid4()),
+            page_content="Book B explains habit formation through repeated practice.",
+            metadata={
+                "document_id": str(uuid4()),
+                "generation_id": str(uuid4()),
+                "document_title": "Book B",
+                "chunk_index": 0,
+                "page_start": 0,
+                "page_end": 0,
+                "cosine_distance": 0.1,
+            },
+        )
+        retrieval = RetrievalResult([document], [to_source(document, "S1")])
+        app.dependency_overrides[get_db] = database
+        app.dependency_overrides[get_current_user] = current_user
+        try:
+            with (
+                patch(
+                    "app.services.conversation_dispatcher.answer_conversation_task.kiq",
+                    new=AsyncMock(side_effect=dispatch),
+                ) as queue,
+                patch(
+                    "app.services.conversation_pipeline.RetrievalService.retrieve",
+                    new=AsyncMock(return_value=retrieval),
+                ) as search,
+            ):
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app),
+                    base_url="http://test/api/v1",
+                ) as client:
+                    created = await client.post(
+                        "/conversations",
+                        json={
+                            "project_id": str(self.project_id),
+                            "title": "Book discussion",
+                        },
+                    )
+                    self.assertEqual(created.status_code, 201, created.text)
+                    conversation_id = created.json()["data"]["id"]
+                    request_id = str(uuid4())
+                    first = {
+                        "content": "  Explain Book B habit formation.  ",
+                        "client_request_id": request_id,
+                    }
+                    sent = await client.post(
+                        f"/conversations/{conversation_id}/messages", json=first
+                    )
+                    self.assertEqual(sent.status_code, 202, sent.text)
+                    run_id = sent.json()["data"]["run"]["id"]
+                    polled = await client.get(f"/conversation-runs/{run_id}")
+                    self.assertEqual(
+                        polled.json()["data"]["status"], "completed", polled.text
+                    )
+                    self.assertEqual(
+                        polled.json()["data"]["sources"][0]["citation_label"], "S1"
+                    )
+                    duplicate = await client.post(
+                        f"/conversations/{conversation_id}/messages", json=first
+                    )
+                    self.assertTrue(duplicate.json()["data"]["reused"])
+                    self.assertEqual(queue.await_count, 1)
+                    conflict = await client.post(
+                        f"/conversations/{conversation_id}/messages",
+                        json={**first, "content": "Changed intent"},
+                    )
+                    self.assertEqual(conflict.status_code, 409)
+                    followup = await client.post(
+                        f"/conversations/{conversation_id}/messages",
+                        json={
+                            "content": "What about repetition?",
+                            "client_request_id": str(uuid4()),
+                        },
+                    )
+                    self.assertEqual(followup.status_code, 202, followup.text)
+                    followup_id = followup.json()["data"]["run"]["id"]
+                    second = (
+                        await client.get(f"/conversation-runs/{followup_id}")
+                    ).json()["data"]
+                    self.assertEqual(second["status"], "completed")
+                    self.assertEqual(
+                        second["rewritten_query"],
+                        "Book B habit formation through repetition",
+                    )
+                    debug = (
+                        await client.get(f"/conversation-runs/{followup_id}/debug")
+                    ).json()["data"]
+                    self.assertEqual(len(debug["snapshot"]["history_messages"]), 2)
+                    self.assertEqual(
+                        search.call_args.args[0], second["rewritten_query"]
+                    )
+                    history = await client.get(
+                        f"/conversations/{conversation_id}/messages"
+                    )
+                    self.assertEqual(
+                        [
+                            message["position"]
+                            for message in history.json()["data"]["messages"]
+                        ],
+                        [1, 2, 3, 4],
+                    )
+                    self.assertEqual(
+                        history.json()["data"]["messages"][0]["content"],
+                        first["content"],
+                    )
+                    self.assertEqual(
+                        history.json()["data"]["messages"][3]["latest_run"]["status"],
+                        "completed",
+                    )
+
+                    queue.side_effect = RuntimeError("private broker details")
+                    third = {
+                        "content": "Clarify practice.",
+                        "client_request_id": str(uuid4()),
+                    }
+                    unavailable = await client.post(
+                        f"/conversations/{conversation_id}/messages", json=third
+                    )
+                    self.assertEqual(unavailable.status_code, 503)
+                    self.assertNotIn("private broker", unavailable.text)
+                    recovered = await client.post(
+                        f"/conversations/{conversation_id}/messages", json=third
+                    )
+                    failed = recovered.json()["data"]["run"]
+                    self.assertTrue(recovered.json()["data"]["reused"])
+                    self.assertEqual(failed["status"], "failed")
+                    self.assertEqual(failed["error_code"], "queue_unavailable")
+                    queue.side_effect = dispatch
+                    retried = await client.post(
+                        f"/conversation-runs/{failed['id']}/retry"
+                    )
+                    self.assertEqual(retried.status_code, 202, retried.text)
+                    self.assertEqual(retried.json()["data"]["attempt_number"], 2)
+                    retry_id = retried.json()["data"]["id"]
+                    self.assertEqual(
+                        (await client.get(f"/conversation-runs/{retry_id}")).json()[
+                            "data"
+                        ]["status"],
+                        "completed",
+                    )
+                    self.assertEqual(
+                        retried.json()["data"]["assistant_message_id"],
+                        failed["assistant_message_id"],
+                    )
+
+                    identity["user_id"] = self.other_id
+                    for path in (
+                        f"/conversations/{conversation_id}",
+                        f"/conversations/{conversation_id}/messages",
+                        f"/conversation-runs/{run_id}",
+                        f"/conversation-runs/{run_id}/sources",
+                    ):
+                        self.assertEqual((await client.get(path)).status_code, 404)
+                    identity["user_id"] = self.user_id
+                    self.assertEqual(
+                        (
+                            await client.delete(f"/conversations/{conversation_id}")
+                        ).status_code,
+                        200,
+                    )
+                    self.assertEqual(
+                        (await client.get(f"/conversation-runs/{run_id}")).status_code,
+                        404,
+                    )
+        finally:
+            app.dependency_overrides.clear()
+            app.dependency_overrides.update(overrides)
 
 
 if __name__ == "__main__":

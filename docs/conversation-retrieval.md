@@ -5,6 +5,11 @@ project as the run's sources. It wraps `VectorStoreService.similarity_search`,
 which checks project ownership, embeds the query, and searches only active,
 completed generations that match the configured embedding model and dimensions.
 
+The [answer context builder](conversation-answer-context.md) can omit whole
+passages to fit the final prompt budget. Its checkpoint keeps all retrieved
+candidates, marks omitted ones unselected, and saves only included sources in
+`selected_sources`.
+
 Prepare `rewritten_query` using the
 [conversation history and rewriting step](conversation-history-and-rewriting.md)
 before retrieval. That step checkpoints the query separately from the original

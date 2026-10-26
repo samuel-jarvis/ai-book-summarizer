@@ -22,6 +22,14 @@ from app.workers.document_summary import summarize_document_task
 router = APIRouter(prefix="/project")
 
 
+def _project_view(project, statuses) -> ProjectResponse:
+    """Validate a project and attach its first document's processing status."""
+    view = ProjectResponse.model_validate(project)
+    if project.id in statuses:
+        view.summary_status, view.embedding_status = statuses[project.id]
+    return view
+
+
 @router.post("", response_model=CreateProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     data: Annotated[CreateProjectForm, Form(media_type="multipart/form-data")],
@@ -53,19 +61,24 @@ async def create_project(
             ),
         ) from exc
 
+    statuses = {project.id: (document.summary_status, document.embedding_status)}
     return CreateProjectResponse(
         message="Project created successfully",
-        data=ProjectResponse.model_validate(project),
+        data=_project_view(project, statuses),
     )
 
 
 @router.get("", response_model=ProjectListResponse)
 async def get_all_projects(db: DbSession, current_user: CurrentUser):
-    projects = await ProjectService(db).get_all(current_user.id)
+    service = ProjectService(db)
+    projects = await service.get_all(current_user.id)
+    statuses = await service.get_document_statuses(
+        [project.id for project in projects], current_user.id
+    )
 
     return ProjectListResponse(
         message="Projects retrieved successfully",
-        data=[ProjectResponse.model_validate(project) for project in projects],
+        data=[_project_view(project, statuses) for project in projects],
     )
 
 
@@ -76,11 +89,12 @@ async def get_project(project_id: uuid.UUID, db: DbSession, current_user: Curren
     summary = await service.get_first_document_summary(
         project_id, current_user.id
     )
+    statuses = await service.get_document_statuses([project.id], current_user.id)
 
     return ProjectDetailResponse(
         message="Project retrieved successfully",
         data=ProjectDetail(
-            **ProjectResponse.model_validate(project).model_dump(),
+            **_project_view(project, statuses).model_dump(),
             summary=summary,
         ),
     )

@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str
     EMBEDDING_MODEL: str = "text-embedding-3-small"
 
+    CONVERSATION_MODEL: str = "deepseek-v4-flash"
+
     DEEPSEEK_TIMEOUT_SECONDS: float = 120.0
     DEEPSEEK_REDUCE_TIMEOUT_SECONDS: float = 300.0
     DEEPSEEK_MAX_RETRIES: int = 3

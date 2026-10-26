@@ -6,6 +6,7 @@ from functools import cached_property
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -30,6 +31,7 @@ class LLMService:
         temperature: float = 0.3,
         chat_model: BaseChatModel | None = None,
     ) -> None:
+        """Configure a lazy provider model, or use the supplied chat model for testing."""
         self.model = model
         self.timeout = (
             timeout if timeout is not None else settings.DEEPSEEK_TIMEOUT_SECONDS
@@ -39,6 +41,7 @@ class LLMService:
 
     @cached_property
     def chat_model(self) -> BaseChatModel:
+        """Create the configured chat client on first use."""
         if self._chat_model is not None:
             return self._chat_model
         if not settings.DEEPSEEK_API_KEY:
@@ -56,9 +59,29 @@ class LLMService:
 
     async def generate(self, prompt: ChatPromptTemplate, values: dict[str, Any]) -> str:
         """Render a prompt and return the complete generated text."""
-        messages = prompt.format_messages(**values)
-        response = await self.chat_model.ainvoke(messages)
+        response = await self.generate_response(prompt, values)
         return StrOutputParser().invoke(response)
+
+    async def generate_response(
+        self,
+        prompt: ChatPromptTemplate,
+        values: dict[str, Any],
+        *,
+        max_tokens: int | None = None,
+        user_id: str | None = None,
+    ) -> BaseMessage:
+        """Return text and provider metadata, optionally bounding DeepSeek output."""
+        if max_tokens is not None and max_tokens < 1:
+            raise ValueError("Output token limit must be positive.")
+        messages = prompt.format_messages(**values)
+        extra_body = {}
+        if max_tokens is not None:
+            # Keep DeepSeek's field name; ChatOpenAI renames top-level max_tokens.
+            extra_body["max_tokens"] = max_tokens
+        if user_id is not None:
+            extra_body["user_id"] = user_id
+        options = {"extra_body": extra_body} if extra_body else {}
+        return await self.chat_model.ainvoke(messages, **options)
 
     async def stream(
         self, prompt: ChatPromptTemplate, values: dict[str, Any]

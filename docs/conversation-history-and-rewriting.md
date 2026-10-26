@@ -107,10 +107,12 @@ async with AsyncSessionLocal.begin() as db:
     )
 ```
 
-These are service-level building blocks; the conversation HTTP routes and worker
-orchestration are not yet wired. The next step can assemble answer context from
-`rewrite.history.messages`, the original message, and `evidence.documents`.
-This change does not assemble or generate the final answer.
+These building blocks are connected by the pipeline and authenticated
+[conversation API](conversation-api.md). The
+[answer context service](conversation-answer-context.md) now assembles a budgeted
+prompt from the saved history, original message, and retrieved passages. The
+[generation service](conversation-answer-generation.md) consumes that prompt and
+publishes successful answers. The API documentation describes the frontend flow.
 
 ## Verification
 

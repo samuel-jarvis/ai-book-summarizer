@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exception import NotFoundError
-from app.models.document import Document
+from app.models.document import Document, DocumentSummaryStatus, EmbeddingStatus
 from app.models.document_summary import DocumentSummary
 from app.models.project import Project
 from app.models.project_documents import ProjectDocument
@@ -97,6 +97,42 @@ class ProjectService:
             )
             .limit(1)
         )
+
+    async def get_document_statuses(
+        self, project_ids: list[uuid.UUID], user_id: uuid.UUID
+    ) -> dict[uuid.UUID, tuple[DocumentSummaryStatus, EmbeddingStatus]]:
+        """Map each owned project to its first document's summary and embedding status.
+
+        One query for any number of projects: DISTINCT ON keeps the earliest
+        linked document per project, matching `get_first_document_summary`.
+        Projects with no documents are simply absent from the result.
+        """
+        if not project_ids:
+            return {}
+
+        result = await self.db.execute(
+            select(
+                ProjectDocument.project_id,
+                Document.summary_status,
+                Document.embedding_status,
+            )
+            .join(Document, Document.id == ProjectDocument.document_id)
+            .join(Project, Project.id == ProjectDocument.project_id)
+            .where(
+                ProjectDocument.project_id.in_(project_ids),
+                Project.user_id == user_id,
+            )
+            .order_by(
+                ProjectDocument.project_id,
+                ProjectDocument.created_at.asc(),
+                ProjectDocument.id.asc(),
+            )
+            .distinct(ProjectDocument.project_id)
+        )
+        return {
+            project_id: (summary_status, embedding_status)
+            for project_id, summary_status, embedding_status in result.all()
+        }
 
     async def get_by_id_with_summary_join_unused(
         self, project_id: uuid.UUID, user_id: uuid.UUID

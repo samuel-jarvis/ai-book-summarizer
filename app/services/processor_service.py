@@ -41,7 +41,8 @@ def extract_text_from_pdf(file_path: str) -> str:
     except Exception as e:
         print(f"Error extracting text from PDF: {e}")
 
-    return "\n".join(text)
+    # PostgreSQL text columns reject NUL bytes, which some PDFs emit.
+    return "\n".join(text).replace("\x00", "")
 
 
 def clean_text(text: str) -> str:

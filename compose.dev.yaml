@@ -5,6 +5,12 @@ x-source: &source
   - ./alembic.ini:/app/alembic.ini:ro
 
 services:
+  db:
+    # For a desktop SQL client (DBeaver, pgAdmin, …). Loopback only, and 5433 so
+    # it can't collide with a locally installed Postgres on 5432.
+    ports:
+      - "127.0.0.1:5433:5432"
+
   api:
     volumes: *source
     environment:

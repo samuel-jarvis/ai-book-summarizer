@@ -203,7 +203,9 @@ class RetrievalServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.index(a, chunks=[("A less related passage", vector(0.8, 0.6))])
         await self.index(b)
         result = await self.retrieve()
-        self.assertEqual([s.document_title for s in result.sources], ["Book B", "Book A"])
+        self.assertEqual(
+            [s.document_title for s in result.sources], ["Book B", "Book A"]
+        )
         self.assertEqual([s.citation_label for s in result.sources], ["S1", "S2"])
         self.assertAlmostEqual(result.sources[0].cosine_distance, 0.0)
         self.assertAlmostEqual(result.sources[1].cosine_distance, 0.2, places=5)
@@ -217,12 +219,14 @@ class RetrievalServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({s.document_id for s in result.sources}, {a})
 
     async def test_only_active_compatible_generations_are_searched(self):
+        """Exclude inactive versions and incompatible models without creating two active versions per book."""
         doc = await self.document()
         generation_id, active_ids = await self.index(
             doc, chunks=[("Current content", vector(0.8, 0.2))]
         )
         await self.index(doc, chunks=[("Old perfect match", vector())], active=False)
-        await self.index(doc, model="old-embedding-model")
+        incompatible = await self.document("Incompatible model")
+        await self.index(incompatible, model="old-embedding-model")
         result = await self.retrieve()
         self.assertEqual([s.chunk_id for s in result.sources], active_ids)
         self.assertEqual(result.sources[0].generation_id, generation_id)

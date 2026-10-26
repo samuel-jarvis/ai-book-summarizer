@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.document import DocumentSummaryStatus, EmbeddingStatus
 from app.schema.response import ApiResponse
 
 
@@ -25,6 +26,10 @@ class ProjectResponse(BaseModel):
     description: str | None
     created_at: datetime
     updated_at: datetime
+    # Processing state of the project's first document, so clients can tell
+    # "still working" from "failed". Null for a project without documents.
+    summary_status: DocumentSummaryStatus | None = None
+    embedding_status: EmbeddingStatus | None = None
 
 
 class ProjectDetail(ProjectResponse):
