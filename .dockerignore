@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.env.*
+**/__pycache__
+**/*.py[cod]
+.ruff_cache
+.vscode
+.codex
+.agents
+temp_uploads
+build
+dist
+*.egg-info
