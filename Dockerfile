@@ -7,8 +7,10 @@ ENV UV_PYTHON_DOWNLOADS=0 UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
 WORKDIR /app
 
 # Install locked dependencies first; application edits can reuse this cached layer.
+# No BuildKit cache mount: Railway's builder rejects one without a service-specific
+# id, and this one Dockerfile builds both the API and worker services.
 COPY pyproject.toml uv.lock README.md ./
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-install-project
+RUN uv sync --locked --no-dev --no-install-project --no-cache
 
 # Runtime: reuse the same Python base and run commands from the copied virtual environment.
 FROM python:3.13-slim-bookworm
