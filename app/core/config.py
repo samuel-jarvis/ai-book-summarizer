@@ -23,7 +23,9 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development",
                          "staging", "production"] = "development"
     BACKEND_CORS_ORIGINS: list[str] = [
-        "http://localhost:3000", "http://localhost:8000"
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "https://lumen-ai.up.railway.app",
     ]
     REDIS_URL: str
     SECRET_KEY: str
