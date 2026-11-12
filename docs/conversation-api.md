@@ -148,6 +148,12 @@ Reload its final state if completion wins the race.
 Cancellation prevents late publication. It does not forcibly abort an in-flight
 provider HTTP request. Deleting the conversation also prevents late publication.
 
+A worker that dies or is redeployed mid-answer no longer locks the conversation.
+Every running attempt carries a lease that the worker renews; the sweeper inside
+the worker fails an attempt whose lease lapsed with `worker_lost`, and a pending
+attempt that never reached a worker with `queue_unavailable`. Both are retryable
+through the normal retry endpoint. Attempts are never re-run automatically.
+
 Retry has no body. It returns a new run ID with an incremented attempt number
 and reuses the original user message and assistant slot. Only the latest attempt
 of the latest turn can be retried, and it must be failed or cancelled. Submitting
@@ -167,10 +173,11 @@ gets 503 or loses its response, repeat it with the same UUID and text to recover
 the existing run. Use its retry endpoint if it failed. If a retry POST loses its
 response, reload history to find the latest run before trying again.
 
-Safe failed-run codes include `queue_unavailable`, `rewrite_failed`,
+Safe failed-run codes include `queue_unavailable`, `worker_lost`, `rewrite_failed`,
 `retrieval_failed`, `context_failed`, `answer_generation_failed`, `answer_empty`,
 `answer_truncated`, `answer_filtered`, and `answer_unusable`. Map these to helpful
-UI messages. Raw provider/account exceptions are not persisted on the run.
+UI messages (`worker_lost` means "interrupted by a restart, try again"). Raw
+provider/account exceptions are not persisted on the run.
 
 ## Sources and diagnostics
 
@@ -204,6 +211,7 @@ uv run pytest -q
 ```
 
 This completes the first conversation backend through the API. Streaming
-transport, automatic memory summaries, retrieval tuning, and automatic crash
-recovery remain separate improvements. After a worker crash, the current API
-lets the user cancel an active attempt and retry it.
+transport, automatic memory summaries, and retrieval tuning remain separate
+improvements. Crash recovery is handled by job leases and the sweeper (see the
+backend `CLAUDE.md`): a lost worker surfaces as a failed `worker_lost` attempt
+with Retry, not a conversation stuck on "running".

@@ -219,11 +219,27 @@ Projects, indexing and RAG:
 - `app/workers/` — `DocumentSummaryWorker` and `DocumentEmbeddingWorker`. Both **read the PDF
   from disk** (`DocumentService.storage_path`, LangChain/pypdf loaders in
   `app/services/indexing/loaders.py`), so unlike the legacy worker they need the upload volume.
-  Each locks the `Document` row `FOR UPDATE` and exits if its status is already
-  `STARTED`/`COMPLETED`; the summary job also exits if `summary_job_id` changed. They commit the
-  `STARTED` flip before doing provider work and mark `FAILED` (then re-raise) on error.
-- `app/tasks.py` is the worker's import target; it re-exports the `app/workers` tasks. **A new
-  task module must be imported there** or the worker never registers it.
+  Each locks the `Document` row `FOR UPDATE` and claims the job only when it is `PENDING`, or
+  `STARTED` **with an expired lease** (a dead worker's); a live lease or `COMPLETED` means a
+  harmless redelivery. Both fence on a job id (`summary_job_id` / `embedding_job_id`) at claim
+  and at the final commit, commit the `STARTED` flip before provider work, and on error mark
+  `FAILED` with a safe `*_error_code` (`JobErrorCode`), then re-raise.
+- **Job leases and the sweeper** (`app/services/jobs/`). Every background job (document summary,
+  embedding, chat run, legacy summary) writes `lease_expires_at = now + JOB_LEASE_SECONDS` when
+  claimed and renews it every `JOB_HEARTBEAT_SECONDS` from a side session (`job_lease` in
+  `lease.py`); a renewal that matches no row means the job changed hands and raises `LeaseLost`,
+  which workers treat as "stop quietly". `JobSweeper` (`sweeper.py`) runs inside every worker
+  from a `WORKER_STARTUP` event behind a Redis lock: expired document/legacy jobs go back to
+  `PENDING` with a new job id and are re-queued up to `JOB_MAX_ATTEMPTS`, then fail as
+  `worker_lost`; expired chat runs fail as `worker_lost` at once (never re-run automatically);
+  rows `PENDING` longer than `JOB_STALE_PENDING_SECONDS` are re-queued (or, for chat, failed as
+  `queue_unavailable`). Taskiq's shutdown cancellation is **not** a user cancel: document jobs
+  hand themselves back to `PENDING` and chat runs fail as `worker_lost`; `hand_back_active_jobs`
+  runs on `WORKER_SHUTDOWN` so that happens even when the wait timeout runs out. Users retry
+  through `POST /project/{id}/retry`, `POST /summary/{id}/retry` and the existing run retry.
+- `app/tasks.py` is the worker's import target; it re-exports the `app/workers` tasks and
+  registers the sweeper's startup/shutdown hooks. **A new task module must be imported there**
+  or the worker never registers it.
 - `app/services/indexing/` — `splitters.py` (token-based via `tiktoken`/`CHUNK_ENCODING`;
   `SUMMARY_CHUNK_TOKENS` for summaries, `RAG_CHUNK_TOKENS`/`RAG_CHUNK_OVERLAP_TOKENS` for
   embeddings), `embedder.py` (LangChain `OpenAIEmbeddings`, `EMBEDDING_MODEL`), and
