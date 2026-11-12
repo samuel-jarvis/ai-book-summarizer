@@ -58,12 +58,20 @@ class ConversationServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         migration = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(migration)
+        lease_spec = importlib.util.spec_from_file_location(
+            "job_lease_migration",
+            Path("alembic/versions/c4f0a2d9e1b7_add_job_leases.py"),
+        )
+        leases = importlib.util.module_from_spec(lease_spec)
+        lease_spec.loader.exec_module(leases)
 
         def create_tables(connection):
             User.__table__.create(connection)
             Project.__table__.create(connection)
             with Operations.context(MigrationContext.configure(connection)):
                 migration.upgrade()
+                # The later job-lease revision's conversation_runs part only.
+                leases._upgrade_conversation_runs()
 
         async with self.engine.begin() as connection:
             await connection.execute(CreateSchema(self.schema))

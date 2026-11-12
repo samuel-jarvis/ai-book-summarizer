@@ -26,7 +26,24 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # documents: one lease per background job
+    _upgrade_documents()
+    _upgrade_conversation_runs()
+    _upgrade_summaries()
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    _downgrade_summaries()
+    _downgrade_conversation_runs()
+    _downgrade_documents()
+
+
+# Split per table so the PostgreSQL tests, which build only the conversation
+# tables in a disposable schema, can apply just the part they need.
+
+
+def _upgrade_documents() -> None:
+    """One lease, attempt counter and error code per document background job."""
     op.add_column(
         "documents",
         sa.Column(
@@ -74,7 +91,9 @@ def upgrade() -> None:
         postgresql_where=sa.text("embedding_status = 'STARTED'"),
     )
 
-    # conversation_runs: heartbeat while RUNNING
+
+def _upgrade_conversation_runs() -> None:
+    """Heartbeat column for RUNNING attempts."""
     op.add_column(
         "conversation_runs",
         sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
@@ -87,7 +106,9 @@ def upgrade() -> None:
         postgresql_where=sa.text("status = 'RUNNING'"),
     )
 
-    # summaries (legacy): job fence, attempts and lease
+
+def _upgrade_summaries() -> None:
+    """Legacy summaries: job fence, attempts and lease."""
     op.add_column("summaries", sa.Column("job_id", sa.Uuid(), nullable=True))
     op.add_column(
         "summaries",
@@ -106,16 +127,19 @@ def upgrade() -> None:
     )
 
 
-def downgrade() -> None:
-    """Downgrade schema."""
+def _downgrade_summaries() -> None:
     op.drop_index("ix_summaries_lease", table_name="summaries")
     op.drop_column("summaries", "lease_expires_at")
     op.drop_column("summaries", "attempts")
     op.drop_column("summaries", "job_id")
 
+
+def _downgrade_conversation_runs() -> None:
     op.drop_index("ix_conversation_runs_lease", table_name="conversation_runs")
     op.drop_column("conversation_runs", "lease_expires_at")
 
+
+def _downgrade_documents() -> None:
     op.drop_index("ix_documents_embedding_lease", table_name="documents")
     op.drop_index("ix_documents_summary_lease", table_name="documents")
     op.drop_column("documents", "embedding_error_code")

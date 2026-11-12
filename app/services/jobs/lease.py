@@ -118,7 +118,7 @@ async def job_lease(
             await asyncio.sleep(interval)
             try:
                 still_ours = await renew()
-            except Exception:  # noqa: BLE001 -- a database blip must not kill a healthy job.
+            except Exception:  # a database blip must not kill a healthy job
                 logger.warning("Lease heartbeat failed; trying again next beat", exc_info=True)
                 continue
             if not still_ours:

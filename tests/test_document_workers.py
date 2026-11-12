@@ -21,20 +21,20 @@ DEAD = datetime.now(UTC) - timedelta(minutes=2)
 
 def fake_document(**overrides):
     """A document row as the workers see it after SELECT ... FOR UPDATE."""
-    base = dict(
-        id=uuid4(),
-        user_id=uuid4(),
-        summary_job_id=uuid4(),
-        summary_status=DocumentSummaryStatus.PENDING,
-        summary_attempts=0,
-        summary_lease_expires_at=None,
-        summary_error_code=None,
-        embedding_job_id=uuid4(),
-        embedding_status=EmbeddingStatus.PENDING,
-        embedding_attempts=0,
-        embedding_lease_expires_at=None,
-        embedding_error_code=None,
-    )
+    base = {
+        "id": uuid4(),
+        "user_id": uuid4(),
+        "summary_job_id": uuid4(),
+        "summary_status": DocumentSummaryStatus.PENDING,
+        "summary_attempts": 0,
+        "summary_lease_expires_at": None,
+        "summary_error_code": None,
+        "embedding_job_id": uuid4(),
+        "embedding_status": EmbeddingStatus.PENDING,
+        "embedding_attempts": 0,
+        "embedding_lease_expires_at": None,
+        "embedding_error_code": None,
+    }
     base.update(overrides)
     return SimpleNamespace(**base)
 
@@ -48,11 +48,11 @@ class SummaryWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.worker = DocumentSummaryWorker(self.db, sessions=self.sessions)
         self.worker._fail = AsyncMock()
         self.worker._release = AsyncMock()
-        self.kwargs = dict(
-            document_id=self.document.id,
-            project_id=uuid4(),
-            job_id=self.document.summary_job_id,
-        )
+        self.kwargs = {
+            "document_id": self.document.id,
+            "project_id": uuid4(),
+            "job_id": self.document.summary_job_id,
+        }
 
     async def run_with(self, outcome):
         """Run the worker with the real work replaced by `outcome` (a value or exception)."""
@@ -175,13 +175,11 @@ class EmbeddingWorkerTests(unittest.IsolatedAsyncioTestCase):
         work.assert_not_awaited()
 
     async def test_failure_records_a_safe_code(self):
-        with patch.object(
-            self.worker, "_index", AsyncMock(side_effect=JobFailure(JobErrorCode.FILE_MISSING))
-        ):
-            with pytest.raises(JobFailure):
-                await self.worker.process(
-                    document_id=self.document.id, project_id=self.project_id
-                )
+        failing = AsyncMock(side_effect=JobFailure(JobErrorCode.FILE_MISSING))
+        with patch.object(self.worker, "_index", failing), pytest.raises(JobFailure):
+            await self.worker.process(
+                document_id=self.document.id, project_id=self.project_id
+            )
         self.worker._fail.assert_awaited_once_with(
             self.document.id, self.document.embedding_job_id, JobErrorCode.FILE_MISSING
         )

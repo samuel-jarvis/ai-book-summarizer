@@ -23,6 +23,13 @@ spec = importlib.util.spec_from_file_location(
 )
 MIGRATION = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(MIGRATION)
+# The job-lease revision later adds a column to conversation_runs; the models
+# reflect it, so the comparison applies that table's part of it too.
+lease_spec = importlib.util.spec_from_file_location(
+    "job_lease_migration", Path("alembic/versions/c4f0a2d9e1b7_add_job_leases.py")
+)
+LEASES = importlib.util.module_from_spec(lease_spec)
+lease_spec.loader.exec_module(LEASES)
 TABLES = {"conversations", "conversation_messages", "conversation_runs"}
 
 
@@ -41,6 +48,7 @@ class ConversationMigrationTests(unittest.TestCase):
                 context = MigrationContext.configure(connection)
                 with Operations.context(context):
                     MIGRATION.upgrade()
+                    LEASES._upgrade_conversation_runs()
                 expected = MetaData(naming_convention=Base.metadata.naming_convention)
                 Table("projects", expected, Column("id", Uuid, primary_key=True))
                 for name in sorted(TABLES):
@@ -61,6 +69,7 @@ class ConversationMigrationTests(unittest.TestCase):
                 )
                 self.assertTrue(any("COMPLETED" in c["sqltext"] for c in constraints))
                 with Operations.context(context):
+                    LEASES._downgrade_conversation_runs()
                     MIGRATION.downgrade()
                 self.assertEqual(
                     inspect(connection).get_table_names(schema=schema), ["projects"]
