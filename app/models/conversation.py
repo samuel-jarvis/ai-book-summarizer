@@ -187,6 +187,12 @@ class ConversationRun(TimestampMixin, Base):
             unique=True,
             postgresql_where=text("status IN ('PENDING', 'RUNNING')"),
         ),
+        # The sweeper looks for RUNNING attempts whose worker stopped renewing.
+        Index(
+            "ix_conversation_runs_lease",
+            "lease_expires_at",
+            postgresql_where=text("status = 'RUNNING'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -210,6 +216,9 @@ class ConversationRun(TimestampMixin, Base):
     pipeline_version: Mapped[str | None] = mapped_column(String(100))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Renewed by the worker's heartbeat while RUNNING; past it, the worker is
+    # presumed dead and the sweeper fails the attempt with `worker_lost`.
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Safe application code only; provider exception details belong in correlated logs.
     error_code: Mapped[str | None] = mapped_column(String(100))
     snapshot: Mapped[RunSnapshot] = mapped_column(

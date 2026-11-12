@@ -1,15 +1,19 @@
 import enum
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,6 +56,18 @@ class Document(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("file_size_bytes >= 0", name="file_size_nonnegative"),
         Index("ix_documents_user_id_content_hash", "user_id", "content_hash"),
+        # The sweeper only ever asks "which STARTED jobs are overdue?", so index
+        # just those rows. Enum columns store the member NAME, hence 'STARTED'.
+        Index(
+            "ix_documents_summary_lease",
+            "summary_lease_expires_at",
+            postgresql_where=text("summary_status = 'STARTED'"),
+        ),
+        Index(
+            "ix_documents_embedding_lease",
+            "embedding_lease_expires_at",
+            postgresql_where=text("embedding_status = 'STARTED'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -116,6 +132,29 @@ class Document(TimestampMixin, Base):
 
     # Identifies the reserved summary job and fences stale worker completions.
     summary_job_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+
+    # Job lease bookkeeping, one set per background job (see services/jobs).
+    # A STARTED job whose lease has passed belongs to a dead worker and may be
+    # claimed again; `*_attempts` counts automatic re-runs so they stay capped;
+    # `*_error_code` is a JobErrorCode string explaining the last FAILED state.
+    summary_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    summary_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    summary_error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    embedding_job_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    embedding_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    embedding_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    embedding_error_code: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
 
     embedding_generations: Mapped[list["EmbeddingGeneration"]] = relationship(
         back_populates="document", cascade="all, delete-orphan", passive_deletes=True)

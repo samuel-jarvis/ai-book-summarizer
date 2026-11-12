@@ -63,6 +63,19 @@ class Settings(BaseSettings):
     DEEPSEEK_REDUCE_TIMEOUT_SECONDS: float = 300.0
     DEEPSEEK_MAX_RETRIES: int = 3
 
+    # Background job leases (app/services/jobs). A worker that claims a job
+    # owns it for JOB_LEASE_SECONDS and renews every JOB_HEARTBEAT_SECONDS; a
+    # job past its lease is presumed abandoned by a dead worker. Keep the lease
+    # several heartbeats long so one slow beat never looks like a crash.
+    JOB_LEASE_SECONDS: int = 180
+    JOB_HEARTBEAT_SECONDS: int = 30
+    # Automatic re-runs of document and legacy summary jobs before they FAIL.
+    # Chat turns are never re-run automatically; the user presses Retry.
+    JOB_MAX_ATTEMPTS: int = 2
+    JOB_SWEEP_INTERVAL_SECONDS: int = 60
+    # A job still PENDING after this long never reached a worker (lost message).
+    JOB_STALE_PENDING_SECONDS: int = 600
+
     @property
     def rag_chunking_version(self) -> str:
         """Identifies how a stored generation was split.
