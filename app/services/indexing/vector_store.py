@@ -50,6 +50,7 @@ class VectorStoreService:
         document_id: UUID,
         project_id: UUID,
         chunking_version: str | None = None,
+        vectors: list[list[float]] | None = None,
     ) -> list[str]:
         """Embed a complete document batch and atomically activate its generation.
 
@@ -57,6 +58,9 @@ class VectorStoreService:
         The caller supplies chunks for that document. It must belong to the caller and
         be attached to the owned project. A savepoint protects the previous
         generation on failure; no partial replacement is committed here.
+
+        Pass `vectors` (one per chunk, already embedded) to keep the provider
+        call outside the row lock this method takes; otherwise it embeds here.
         """
         if not chunks:
             return []
@@ -88,7 +92,8 @@ class VectorStoreService:
             if document is None:
                 raise NotFoundError("Document not found in this project.")
 
-            vectors = await embed_texts([chunk.page_content for chunk in chunks])
+            if vectors is None:
+                vectors = await embed_texts([chunk.page_content for chunk in chunks])
             self._validate_vectors(vectors, len(chunks))
             generation = EmbeddingGeneration(
                 id=uuid4(),

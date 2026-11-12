@@ -12,6 +12,7 @@ from app.core.exception import ConflictError, NotFoundError
 from app.models.conversation import RunSnapshot
 from app.services.answer_generation_service import AnswerGenerationError
 from app.services.conversation_pipeline import ConversationPipeline
+from app.services.jobs.lease import LeaseLost
 from app.services.retrieval_service import RetrievalResult
 
 
@@ -105,10 +106,20 @@ class ConversationPipelineTests(unittest.IsolatedAsyncioTestCase):
         await self.pipeline.process(self.run_id, self.user_id)
         self.conversation.fail_if_active.assert_not_awaited()
 
-    async def test_task_cancellation_is_recorded_and_propagated(self):
-        """Worker shutdown can cancel a running workflow without publishing an answer."""
+    async def test_task_cancellation_fails_the_run_as_worker_lost_and_propagates(self):
+        """Worker shutdown records a retryable failure, never a user cancellation."""
         self.rewriter.rewrite_run.side_effect = asyncio.CancelledError
         with pytest.raises(asyncio.CancelledError):
             await self.pipeline.process(self.run_id, self.user_id)
-        self.conversation.cancel.assert_awaited_once_with(self.run_id)
+        self.conversation.fail_if_active.assert_awaited_once_with(
+            self.run_id, "worker_lost"
+        )
+        self.conversation.cancel.assert_not_awaited()
+        self.generation.generate_run.assert_not_awaited()
+
+    async def test_lost_lease_stops_quietly(self):
+        """A run the sweeper already failed is abandoned without a second write."""
+        self.rewriter.rewrite_run.side_effect = LeaseLost
+        await self.pipeline.process(self.run_id, self.user_id)
+        self.conversation.fail_if_active.assert_not_awaited()
         self.generation.generate_run.assert_not_awaited()

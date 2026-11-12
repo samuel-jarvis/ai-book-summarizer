@@ -370,14 +370,14 @@ class AnswerGenerationRunTests(unittest.IsolatedAsyncioTestCase):
         assert self.run.error_code is None
         assert self.assistant.content == ""
 
-    async def test_task_cancellation_marks_run_cancelled_and_propagates(self):
-        """Cancelling the generation coroutine closes the attempt without publishing."""
+    async def test_task_cancellation_fails_run_as_worker_lost_and_propagates(self):
+        """Worker shutdown mid-generation leaves a retryable failure, never an answer."""
         self.llm.generate_response.side_effect = asyncio.CancelledError
         with pytest.raises(asyncio.CancelledError):
             await self.generate()
-        assert self.run.status == RunStatus.CANCELLED
+        assert self.run.status == RunStatus.FAILED
         assert self.assistant.content == ""
-        assert self.run.error_code is None
+        assert self.run.error_code == "worker_lost"
 
 
 class LLMResponseTests(unittest.IsolatedAsyncioTestCase):

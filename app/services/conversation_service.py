@@ -23,6 +23,7 @@ from app.models.conversation import (
     RunStatus,
 )
 from app.models.project import Project
+from app.services.jobs.lease import lease_deadline
 
 if TYPE_CHECKING:
     from app.services.answer_context_service import AnswerContext
@@ -289,6 +290,7 @@ class ConversationService:
         run.status = RunStatus.RUNNING
         run.stage = "starting"
         run.started_at = utcnow()
+        run.lease_expires_at = lease_deadline()
         run.model = model
         run.pipeline_version = pipeline_version
         await self.db.flush()
@@ -328,6 +330,8 @@ class ConversationService:
         ):
             raise ConflictError("Answer inputs cannot change after generation starts.")
         run.stage = stage
+        # Progress is proof of life, so a checkpoint also renews the lease.
+        run.lease_expires_at = lease_deadline()
         for name, value in {
             "snapshot": snapshot,
             "metrics": metrics,

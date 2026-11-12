@@ -110,7 +110,9 @@ class AnswerGenerationService:
                 )
             return text
         except asyncio.CancelledError:
-            await self._terminate_run(run_id, user_id, sessions, metrics, None)
+            # The worker is shutting down mid-generation. Record it as a
+            # retryable failure, not a user cancellation.
+            await self._terminate_run(run_id, user_id, sessions, metrics, "worker_lost")
             raise
 
     async def _terminate_run(

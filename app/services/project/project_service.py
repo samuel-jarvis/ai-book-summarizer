@@ -30,7 +30,10 @@ class ProjectService:
         document = await DocumentService(self.db).create_document(
             user_id=user_id, file=file
         )
+        # One fence token per background job: a worker whose job was re-queued
+        # or retried can no longer write its (stale) result.
         document.summary_job_id = uuid.uuid4()
+        document.embedding_job_id = uuid.uuid4()
         file_path = DocumentService.storage_path(document)
 
         try:

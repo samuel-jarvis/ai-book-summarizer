@@ -51,7 +51,9 @@ async def create_project(
         await summarize_document_task.kiq(
             str(document.id), str(project.id), str(document.summary_job_id)
         )
-        await embed_document_task.kiq(str(document.id), str(project.id))
+        await embed_document_task.kiq(
+            str(document.id), str(project.id), str(document.embedding_job_id)
+        )
     except RedisError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

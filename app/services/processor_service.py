@@ -6,11 +6,19 @@ from pathlib import Path
 
 import fitz  # pymupdf
 import tqdm
+from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.summary import Summary, SummaryStatus
 from app.services.ai_service import DeepSeekAIService
+from app.services.jobs.lease import (
+    LeaseLost,
+    claimable,
+    job_lease,
+    lease_deadline,
+    row_renewer,
+)
 from app.utils.prompts import CHUNK_PROMPT, SUMMARY_PROMPT
 
 
@@ -171,29 +179,104 @@ async def summarize_pdf(text: str, user_id: str | None = None) -> str:
     return final_summary
 
 
+def _owned_summary(summary_id: uuid.UUID, job_id: uuid.UUID) -> tuple:
+    """Conditions pinning the row to this claim; false once the job changed hands."""
+    return (
+        Summary.id == summary_id,
+        Summary.job_id == job_id,
+        Summary.status == SummaryStatus.PROCESSING,
+    )
+
+
+async def _finish_summary(
+    summary_id: uuid.UUID, job_id: uuid.UUID, *, status: SummaryStatus, content: str | None = None
+) -> None:
+    """Record the outcome only if we still own the job, so a stale worker writes nothing."""
+    values: dict = {"status": status, "lease_expires_at": None}
+    if content is not None:
+        values["content"] = content
+    async with AsyncSessionLocal.begin() as db:
+        await db.execute(
+            update(Summary).where(*_owned_summary(summary_id, job_id)).values(**values)
+        )
+
+
+async def _release_summary(summary_id: uuid.UUID, job_id: uuid.UUID) -> None:
+    """Hand the job back on shutdown: PENDING again, the attempt uncounted, re-queued."""
+    async with AsyncSessionLocal.begin() as db:
+        result = await db.execute(
+            update(Summary)
+            .where(*_owned_summary(summary_id, job_id))
+            .values(
+                status=SummaryStatus.PENDING,
+                lease_expires_at=None,
+                attempts=Summary.attempts - 1,
+            )
+        )
+    if result.rowcount != 1:
+        return
+    from app.tasks import process_pdf_task  # noqa: PLC0415 -- app.tasks imports this module.
+
+    try:
+        await process_pdf_task.kiq(str(summary_id))
+    except Exception:  # noqa: BLE001 -- the sweeper re-queues stale PENDING rows.
+        print(f"Could not re-queue summary {summary_id} on shutdown")
+
+
 async def process_summary(summary_id: str) -> None:
+    """Claim the summary job under a lease, run the map-reduce, and record the outcome once.
+
+    A PENDING row, or a PROCESSING row whose worker stopped renewing its lease,
+    is claimed; anything else (already running, finished) is a harmless
+    redelivery and is skipped, so a job can no longer run twice.
+    """
+    summary_uuid = uuid.UUID(summary_id)
     async with AsyncSessionLocal() as db:
-        summary = await db.get(Summary, uuid.UUID(summary_id))
+        summary = await db.scalar(
+            select(Summary).where(Summary.id == summary_uuid).with_for_update()
+        )
         if summary is None:
             print(f"Summary {summary_id} not found; skipping.")
+            await db.rollback()
+            return
+        if not claimable(
+            summary.status,
+            summary.lease_expires_at,
+            pending=SummaryStatus.PENDING,
+            started=SummaryStatus.PROCESSING,
+        ):
+            await db.rollback()
             return
 
+        job_id = uuid.uuid4()
         summary.status = SummaryStatus.PROCESSING
+        summary.job_id = job_id
+        summary.attempts += 1
+        summary.lease_expires_at = lease_deadline()
         await db.commit()
+        source_text = summary.source_text
+        user_id = str(summary.user_id) if summary.user_id else None
 
-        try:
-            final_summary = await summarize_pdf(
-                summary.source_text,
-                user_id=str(summary.user_id) if summary.user_id else None,
-            )
-        except Exception as e:
-            # Worker log only. The client sees status FAILED and nothing else — no
-            # provider detail is persisted anywhere the API can reach.
-            print(f"Failed to summarize summary {summary_id}: {e}")
-            summary.status = SummaryStatus.FAILED
-            await db.commit()
-            return
+    renew = row_renewer(
+        Summary, Summary.lease_expires_at, *_owned_summary(summary_uuid, job_id)
+    )
+    try:
+        async with job_lease(renew):
+            final_summary = await summarize_pdf(source_text, user_id=user_id)
+    except LeaseLost:
+        # Re-queued or retried behind our back; the new attempt owns the row.
+        return
+    except asyncio.CancelledError:
+        # Worker shutdown, not a failure: hand the job back and re-queue it.
+        await _release_summary(summary_uuid, job_id)
+        raise
+    except Exception as e:
+        # Worker log only. The client sees status FAILED and nothing else — no
+        # provider detail is persisted anywhere the API can reach.
+        print(f"Failed to summarize summary {summary_id}: {e}")
+        await _finish_summary(summary_uuid, job_id, status=SummaryStatus.FAILED)
+        return
 
-        summary.content = final_summary
-        summary.status = SummaryStatus.COMPLETED
-        await db.commit()
+    await _finish_summary(
+        summary_uuid, job_id, status=SummaryStatus.COMPLETED, content=final_summary
+    )
