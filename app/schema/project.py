@@ -30,6 +30,10 @@ class ProjectResponse(BaseModel):
     # "still working" from "failed". Null for a project without documents.
     summary_status: DocumentSummaryStatus | None = None
     embedding_status: EmbeddingStatus | None = None
+    # Safe reason codes for a FAILED job (see JobErrorCode): lets the client
+    # say "the server restarted, retry" rather than "image-only PDF" for all.
+    summary_error_code: str | None = None
+    embedding_error_code: str | None = None
 
 
 class ProjectDetail(ProjectResponse):

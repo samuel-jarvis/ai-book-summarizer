@@ -1,16 +1,43 @@
 import uuid
+from typing import NamedTuple
 
 from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exception import NotFoundError
+from app.core.exception import ConflictError, NotFoundError
 from app.models.document import Document, DocumentSummaryStatus, EmbeddingStatus
 from app.models.document_summary import DocumentSummary
 from app.models.project import Project
 from app.models.project_documents import ProjectDocument
 from app.schema.project import CreateProjectRequest
 from app.services.document.document_service import DocumentService
+
+
+class DocumentJobStatus(NamedTuple):
+    """A document's two background jobs as the client sees them."""
+
+    summary_status: DocumentSummaryStatus
+    embedding_status: EmbeddingStatus
+    summary_error_code: str | None = None
+    embedding_error_code: str | None = None
+
+    @classmethod
+    def of(cls, document: Document) -> "DocumentJobStatus":
+        return cls(
+            document.summary_status,
+            document.embedding_status,
+            document.summary_error_code,
+            document.embedding_error_code,
+        )
+
+
+class RetryPlan(NamedTuple):
+    """Which of a document's jobs a retry reset, so the route can re-dispatch them."""
+
+    document: Document
+    summary: bool
+    embedding: bool
 
 
 class ProjectService:
@@ -101,9 +128,55 @@ class ProjectService:
             .limit(1)
         )
 
+    async def retry_failed_jobs(
+        self, project_id: uuid.UUID, user_id: uuid.UUID
+    ) -> RetryPlan:
+        """Put the first document's FAILED jobs back to PENDING, ready to be queued again.
+
+        Each reset job gets a fresh job id (so a straggling old worker is
+        fenced) and its attempt counter starts over. Jobs that did not fail
+        are untouched; with nothing failed this is a 409. The route dispatches
+        after this commits, and the sweeper covers a dispatch that is lost.
+        """
+        document = await self.db.scalar(
+            select(Document)
+            .join(ProjectDocument, ProjectDocument.document_id == Document.id)
+            .join(Project, Project.id == ProjectDocument.project_id)
+            .where(
+                ProjectDocument.project_id == project_id,
+                Project.user_id == user_id,
+            )
+            .order_by(ProjectDocument.created_at.asc(), ProjectDocument.id.asc())
+            .limit(1)
+            .with_for_update(of=Document)
+        )
+        if document is None:
+            raise NotFoundError("Project not found.")
+
+        retry_summary = document.summary_status == DocumentSummaryStatus.FAILED
+        retry_embedding = document.embedding_status == EmbeddingStatus.FAILED
+        if not (retry_summary or retry_embedding):
+            await self.db.rollback()
+            raise ConflictError("Nothing to retry: no job on this project has failed.")
+
+        if retry_summary:
+            document.summary_status = DocumentSummaryStatus.PENDING
+            document.summary_job_id = uuid.uuid4()
+            document.summary_attempts = 0
+            document.summary_lease_expires_at = None
+            document.summary_error_code = None
+        if retry_embedding:
+            document.embedding_status = EmbeddingStatus.PENDING
+            document.embedding_job_id = uuid.uuid4()
+            document.embedding_attempts = 0
+            document.embedding_lease_expires_at = None
+            document.embedding_error_code = None
+        await self.db.commit()
+        return RetryPlan(document, retry_summary, retry_embedding)
+
     async def get_document_statuses(
         self, project_ids: list[uuid.UUID], user_id: uuid.UUID
-    ) -> dict[uuid.UUID, tuple[DocumentSummaryStatus, EmbeddingStatus]]:
+    ) -> dict[uuid.UUID, DocumentJobStatus]:
         """Map each owned project to its first document's summary and embedding status.
 
         One query for any number of projects: DISTINCT ON keeps the earliest
@@ -118,6 +191,8 @@ class ProjectService:
                 ProjectDocument.project_id,
                 Document.summary_status,
                 Document.embedding_status,
+                Document.summary_error_code,
+                Document.embedding_error_code,
             )
             .join(Document, Document.id == ProjectDocument.document_id)
             .join(Project, Project.id == ProjectDocument.project_id)
@@ -133,8 +208,8 @@ class ProjectService:
             .distinct(ProjectDocument.project_id)
         )
         return {
-            project_id: (summary_status, embedding_status)
-            for project_id, summary_status, embedding_status in result.all()
+            project_id: DocumentJobStatus(*statuses)
+            for project_id, *statuses in result.all()
         }
 
     async def get_by_id_with_summary_join_unused(

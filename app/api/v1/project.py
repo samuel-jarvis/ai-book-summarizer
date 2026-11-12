@@ -14,7 +14,7 @@ from app.schema.project import (
     ProjectListResponse,
     ProjectResponse,
 )
-from app.services.project.project_service import ProjectService
+from app.services.project.project_service import DocumentJobStatus, ProjectService
 from app.taskiq_broker import is_task_queue_available
 from app.workers.document_embedding import embed_document_task
 from app.workers.document_summary import summarize_document_task
@@ -26,7 +26,11 @@ def _project_view(project, statuses) -> ProjectResponse:
     """Validate a project and attach its first document's processing status."""
     view = ProjectResponse.model_validate(project)
     if project.id in statuses:
-        view.summary_status, view.embedding_status = statuses[project.id]
+        jobs = DocumentJobStatus(*statuses[project.id])
+        view.summary_status = jobs.summary_status
+        view.embedding_status = jobs.embedding_status
+        view.summary_error_code = jobs.summary_error_code
+        view.embedding_error_code = jobs.embedding_error_code
     return view
 
 
@@ -63,9 +67,53 @@ async def create_project(
             ),
         ) from exc
 
-    statuses = {project.id: (document.summary_status, document.embedding_status)}
+    statuses = {project.id: DocumentJobStatus.of(document)}
     return CreateProjectResponse(
         message="Project created successfully",
+        data=_project_view(project, statuses),
+    )
+
+
+@router.post(
+    "/{project_id}/retry",
+    response_model=CreateProjectResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_project(project_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    """Queue the project's failed jobs again (409 when nothing has failed)."""
+    if not await is_task_queue_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The task queue is unavailable. Please try again later.",
+        )
+
+    service = ProjectService(db)
+    project = await service.get_by_id(project_id, current_user.id)
+    plan = await service.retry_failed_jobs(project_id, current_user.id)
+    document = plan.document
+
+    try:
+        if plan.summary:
+            await summarize_document_task.kiq(
+                str(document.id), str(project.id), str(document.summary_job_id)
+            )
+        if plan.embedding:
+            await embed_document_task.kiq(
+                str(document.id), str(project.id), str(document.embedding_job_id)
+            )
+    except RedisError as exc:
+        # The rows are already PENDING; the sweeper re-queues them if this send was lost.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "The retry was recorded but could not be queued yet. "
+                "It will start automatically once the queue is back."
+            ),
+        ) from exc
+
+    statuses = {project.id: DocumentJobStatus.of(document)}
+    return CreateProjectResponse(
+        message="Retry queued",
         data=_project_view(project, statuses),
     )
 

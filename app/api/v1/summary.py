@@ -134,6 +134,40 @@ async def get_summary_by_id(summary_id: uuid.UUID, db: DbSession, current_user: 
     )
 
 
+@router.post(
+    "/summary/{summary_id}/retry",
+    response_model=SummarizeApiResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_summary(summary_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
+    """Queue a failed summary again (409 unless it is failed; 429 when over quota)."""
+    if not await is_task_queue_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The task queue is unavailable. Please try again later.",
+        )
+
+    summary = await SummaryService(db).retry(summary_id, current_user.id)
+
+    try:
+        await process_pdf_task.kiq(str(summary.id))
+    except RedisError as exc:
+        # The row is already PENDING; the sweeper re-queues it if this send was lost.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "The retry was recorded but could not be queued yet. "
+                "It will start automatically once the queue is back."
+            ),
+        ) from exc
+
+    return SummarizeApiResponse(
+        success=True,
+        message="Retry queued",
+        data=SummarizeResponse.model_validate(summary),
+    )
+
+
 @router.delete("/summary/{summary_id}")
 async def delete_summary_by_id(summary_id: uuid.UUID, db: DbSession, current_user: CurrentUser):
     await SummaryService(db).delete_book(summary_id, current_user.id)

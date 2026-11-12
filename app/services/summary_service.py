@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import utcnow
-from app.core.exception import NotFoundError, RateLimitError, ValidationError
+from app.core.exception import (
+    ConflictError,
+    NotFoundError,
+    RateLimitError,
+    ValidationError,
+)
 from app.models.summary import Summary, SummaryStatus
 from app.schema.summary import SummarizeCreate, SummarizeCreateForm, SummarizeUpdate
 from app.services.processor_service import extract_text_from_pdf
@@ -119,6 +124,27 @@ class SummaryService:
         await self.db.delete(summary)
         await self.db.flush()
         await self.db.commit()
+
+    async def retry(self, summary_id: uuid.UUID, user_id: uuid.UUID) -> Summary:
+        """Queue a failed summary again on the same row, so title and quota carry over.
+
+        Only a FAILED row can be retried (409 otherwise). The retry counts
+        against today's quota like a fresh upload would, so retrying is never
+        a way around the limit. The route dispatches after this commits.
+        """
+        summary = await self._get_owned(summary_id, user_id)
+        if summary.status is not SummaryStatus.FAILED:
+            raise ConflictError("Only a failed summary can be retried.")
+        await self.ensure_daily_quota(user_id)
+
+        summary.status = SummaryStatus.PENDING
+        summary.job_id = None
+        summary.attempts = 0
+        summary.lease_expires_at = None
+        summary.content = None
+        await self.db.flush()
+        await self.db.commit()
+        return summary
 
     async def update_book_title(
         self, summary_id: uuid.UUID, data: SummarizeUpdate, user_id: uuid.UUID
