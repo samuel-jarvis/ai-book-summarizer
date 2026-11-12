@@ -8,8 +8,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.jobs.lease import (
+    ACTIVE_JOBS,
     LeaseLost,
     claimable,
+    hand_back_active_jobs,
     job_lease,
     lease_deadline,
     lease_expired,
@@ -77,8 +79,38 @@ class HeartbeatTests(unittest.IsolatedAsyncioTestCase):
         with pytest.raises(asyncio.CancelledError):
             await task
 
+    async def test_shutdown_hand_back_cancels_running_jobs_and_waits_for_them(self):
+        renew = AsyncMock(return_value=True)
+        handed_back = []
+
+        async def work():
+            try:
+                async with job_lease(renew, interval=0.01):
+                    await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                handed_back.append("released")  # the worker's hand-back branch
+                raise
+
+        task = asyncio.create_task(work())
+        await asyncio.sleep(0.02)
+        assert task in ACTIVE_JOBS
+
+        interrupted = await hand_back_active_jobs(timeout=1)
+
+        assert interrupted == 1
+        assert handed_back == ["released"]
+        assert task.done() and task not in ACTIVE_JOBS
+
+    async def test_shutdown_hand_back_with_nothing_running_is_a_no_op(self):
+        assert await hand_back_active_jobs(timeout=1) == 0
+
     async def test_renewal_errors_do_not_kill_a_healthy_job(self):
-        renew = AsyncMock(side_effect=[RuntimeError("db blip"), True, True, True, True])
+        renew = AsyncMock(side_effect=[RuntimeError("db blip")] + [True] * 50)
         async with job_lease(renew, interval=0.01):
-            await asyncio.sleep(0.04)
+            # Wait for the beat after the failed one, rather than trusting
+            # timer granularity (coarse on Windows) to fit N beats in a sleep.
+            for _ in range(200):
+                if renew.await_count >= 2:
+                    break
+                await asyncio.sleep(0.01)
         assert renew.await_count >= 2

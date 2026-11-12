@@ -3,6 +3,7 @@ import logging
 
 from taskiq import TaskiqEvents, TaskiqState
 
+from app.services.jobs.lease import hand_back_active_jobs
 from app.services.jobs.sweeper import run_sweeper_forever
 from app.services.processor_service import process_summary
 from app.taskiq_broker import broker
@@ -39,8 +40,15 @@ async def start_job_sweeper(state: TaskiqState) -> None:
 
 
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
-async def stop_job_sweeper(state: TaskiqState) -> None:
-    """Stop the sweeper loop with the worker."""
+async def on_worker_shutdown(state: TaskiqState) -> None:
+    """Hand running jobs back, then stop the sweeper loop.
+
+    This runs after taskiq has stopped fetching and waited `--wait-tasks-timeout`
+    for jobs to finish on their own, and before the Redis pool closes, so the
+    hand-back can still re-queue. Keep `--shutdown-timeout` above
+    JOB_SHUTDOWN_HANDBACK_SECONDS or taskiq cuts this short.
+    """
+    await hand_back_active_jobs()
     task: asyncio.Task | None = getattr(state, "job_sweeper", None)
     if task is None:
         return

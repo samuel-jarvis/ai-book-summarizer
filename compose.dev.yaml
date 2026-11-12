@@ -25,8 +25,9 @@ services:
       ENVIRONMENT: development
       WATCHFILES_FORCE_POLLING: "true"
     # watchfiles is already installed through FastAPI's standard dependencies.
-    # Allow active tasks time to finish before forcing a worker restart.
-    command: ["watchfiles", "--filter", "python", "--sigint-timeout", "300", "taskiq worker app.taskiq_broker:broker app.tasks --workers 1", "/app/app"]
+    # Allow active tasks time to finish before forcing a worker restart; the
+    # same wait/shutdown budget as compose.yaml applies on every reload.
+    command: ["watchfiles", "--filter", "python", "--sigint-timeout", "300", "taskiq worker app.taskiq_broker:broker app.tasks --workers 1 --wait-tasks-timeout 240 --shutdown-timeout 30", "/app/app"]
     stop_grace_period: 310s
 
   migrate:

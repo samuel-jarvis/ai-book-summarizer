@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development",
                          "staging", "production"] = "development"
     BACKEND_CORS_ORIGINS: list[str] = [
-        "http://localhost:3000",
+        "http://localhost:3026",
         "http://localhost:8000",
         "https://lumen-ai.up.railway.app",
     ]
@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     JOB_SWEEP_INTERVAL_SECONDS: int = 60
     # A job still PENDING after this long never reached a worker (lost message).
     JOB_STALE_PENDING_SECONDS: int = 600
+    # On worker shutdown, how long interrupted jobs get to hand themselves back
+    # (PENDING + re-queue, or worker_lost). Must fit inside the worker's
+    # --shutdown-timeout and the platform's stop grace period.
+    JOB_SHUTDOWN_HANDBACK_SECONDS: int = 20
 
     @property
     def rag_chunking_version(self) -> str:

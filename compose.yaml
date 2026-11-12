@@ -71,7 +71,19 @@ services:
 
   worker:
     <<: *app
-    command: ["taskiq", "worker", "app.taskiq_broker:broker", "app.tasks"]
+    # Shutdown budget, inside the 5 minute stop_grace_period: on SIGTERM taskiq
+    # stops fetching and gives running jobs up to 240s to finish; whatever is
+    # still running is then cancelled and hands itself back (re-queued, or
+    # worker_lost for chat) within --shutdown-timeout, before Docker's SIGKILL.
+    command:
+      - taskiq
+      - worker
+      - app.taskiq_broker:broker
+      - app.tasks
+      - --wait-tasks-timeout
+      - "240"
+      - --shutdown-timeout
+      - "30"
     volumes:
       - uploads:/app/temp_uploads
     depends_on:

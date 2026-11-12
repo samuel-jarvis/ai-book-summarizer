@@ -29,6 +29,37 @@ logger = logging.getLogger(__name__)
 
 Renewer = Callable[[], Awaitable[bool]]
 
+# Tasks currently inside a `job_lease` block in this process. On worker
+# shutdown they are cancelled on purpose (see `hand_back_active_jobs`) so each
+# worker's CancelledError branch can hand its job back instead of the process
+# simply vanishing with the job still marked in progress.
+ACTIVE_JOBS: set[asyncio.Task] = set()
+
+
+async def hand_back_active_jobs(timeout: float | None = None) -> int:
+    """Cancel every running job and wait briefly for its hand-back to finish.
+
+    taskiq's own shutdown waits for tasks but never cancels them, so without
+    this a job that outlives the wait is dropped mid-flight and only the
+    sweeper's lease timeout rescues it minutes later. Returns how many jobs
+    were interrupted.
+    """
+    tasks = {task for task in ACTIVE_JOBS if not task.done()}
+    if not tasks:
+        return 0
+    timeout = settings.JOB_SHUTDOWN_HANDBACK_SECONDS if timeout is None else timeout
+    logger.info("Handing back %d running job(s) before shutdown", len(tasks))
+    for task in tasks:
+        task.cancel()
+    _, pending = await asyncio.wait(tasks, timeout=timeout)
+    if pending:
+        logger.warning(
+            "%d job(s) did not finish handing back in %ss; the sweeper will recover them",
+            len(pending),
+            timeout,
+        )
+    return len(tasks)
+
 
 class LeaseLost(Exception):
     """The job was handed to another worker, or retried, while we were working."""
@@ -128,6 +159,8 @@ async def job_lease(
                 return
 
     heartbeat = asyncio.create_task(beat())
+    if owner is not None:
+        ACTIVE_JOBS.add(owner)
     try:
         yield
     except asyncio.CancelledError:
@@ -137,6 +170,8 @@ async def job_lease(
             raise LeaseLost() from None
         raise
     finally:
+        if owner is not None:
+            ACTIVE_JOBS.discard(owner)
         heartbeat.cancel()
         with suppress(asyncio.CancelledError):
             await heartbeat

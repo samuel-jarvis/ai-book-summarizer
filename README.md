@@ -226,7 +226,7 @@ REDIS_URL="redis://localhost:6379/0"
 SECRET_KEY="generate-a-real-one-see-below"
 ENVIRONMENT="development"
 DEBUG=false
-BACKEND_CORS_ORIGINS=["http://localhost:3000","http://localhost:8000"]
+BACKEND_CORS_ORIGINS=["http://localhost:3026","http://localhost:8000"]
 ```
 
 `SECRET_KEY` signs the JWTs and **must be at least 32 bytes** for HS256 — PyJWT warns below that. Generate one with:
@@ -279,7 +279,7 @@ npm install
 npm run dev
 ```
 
-The Vite client runs at `http://localhost:3000` and proxies `/api` requests to the backend. Use that origin rather than `http://localhost:8000` directly — the proxy keeps the browser same-origin, which is what allows the refresh cookie to work in development.
+The Vite client runs at `http://localhost:3026` and proxies `/api` requests to the backend. Use that origin rather than `http://localhost:8000` directly — the proxy keeps the browser same-origin, which is what allows the refresh cookie to work in development.
 
 ## Working with migrations
 
@@ -362,6 +362,14 @@ uv run alembic upgrade head
 ```
 
 The worker service must not run migrations — two services migrating concurrently is a race worth avoiding.
+
+**Worker shutdown and deploys.** Every background job holds a lease that the running worker renews; a job whose lease lapses is re-queued or failed by the sweeper that runs inside the worker (see `app/services/jobs/`). Deploys still go smoother when the old worker gets time to finish or hand back its jobs, so start the worker with the same budget Compose uses:
+
+```bash
+taskiq worker app.taskiq_broker:broker app.tasks --wait-tasks-timeout 240 --shutdown-timeout 30
+```
+
+On SIGTERM taskiq stops taking new messages and waits up to 240 s for running jobs; anything still running is then cancelled and hands itself back (document jobs return to the queue, chat answers fail with `worker_lost` so the user can retry). On Railway, set the worker service's **deployment draining** window to at least 300 s, or the old process is killed at once and in-flight jobs wait for the sweeper's lease timeout (about `JOB_LEASE_SECONDS` plus one sweep interval) before they recover.
 
 Production environment notes:
 
