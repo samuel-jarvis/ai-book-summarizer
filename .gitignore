@@ -14,3 +14,5 @@ wheels/
 !.env.example
 
 temp_uploads
+evals/fixtures/
+evals/results/
