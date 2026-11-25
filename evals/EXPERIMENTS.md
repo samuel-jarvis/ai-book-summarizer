@@ -7,11 +7,14 @@ every recorded run live in [history/](history/).
 ## Results over time
 
 Retrieval counts labeled quotes found among the retrieved chunks. Correct is the AI
-judge's verdict. Rates are over the 12 cases (14 labeled quotes).
+judge's verdict over completed cases. Snapshots are only comparable when they use the
+same case labels (the `cases_hash` in each snapshot).
 
-| Snapshot | Change | Comparison retrieval | Comparison correct | Overall retrieval | Overall correct |
-|---|---|---|---|---|---|
-| `baseline-v1` | none (starting point) | 2/8 | 0/3 | 7/14 | 8/12 |
+| Snapshot | Cases | Change | Comparison retrieval | Comparison correct | Overall retrieval | Overall correct |
+|---|---|---|---|---|---|---|
+| `baseline-v1` (superseded) | 12 | none (starting point) | 2/8 | 0/3 | 7/14 | 8/12 |
+| `baseline-v2` | 23 | none; more cases | 4/14 | 1/6 (+1 failed) | 12/25 | 14/22 |
+| `baseline-v2-holdout` | 6 | none; held-out cases | 2/4 | 1/2 | 5/7 | 5/6 |
 
 ## Method
 
@@ -32,7 +35,7 @@ direct and follow-up rows for regressions on every change.
 
 ## Entries
 
-### Baseline v1
+### Baseline v1 (superseded by v2)
 
 - Date: 2026-11-25. Snapshot: `baseline-v1`.
 - Code: `main` at 248c06f plus the then-uncommitted eval harness.
@@ -46,6 +49,31 @@ direct and follow-up rows for regressions on every change.
 - Caveats: only 3 comparison cases. The judge is the same model that writes the answers.
   This report predates run stamping, so its snapshot carries a note instead of a commit.
 
+### Baseline v2 (supersedes v1)
+
+- Date: 2026-11-25. Snapshots: `baseline-v2` (23 cases) and `baseline-v2-holdout` (6 cases).
+- Why: v1 had only 3 comparison cases. The labels changed (23 cases = the original 12
+  plus 11 new; 6 more held out), so v1 is no longer comparable. One v1 label was
+  corrected before any run: the `chat-020` quote had a typo (`oﬀmy`) and was shortened.
+- Code: `main` at 8687c31. The new case files were still uncommitted when it ran, so the
+  snapshots carry `git_dirty: true` for that reason only.
+- Result (dev): direct 5/6 correct, follow-up 3/5, comparison 1/6 plus one failed case,
+  unanswerable 5/5. Retrieval 12/25. Holdout: 5/6 correct, retrieval 5/7.
+- The starved-book pattern from v1 repeats. Of the 8 cross-book comparison cases that
+  completed, 5 had one book at 0 or 1 of the 6 retrieved chunks (007: 6/0, 008: 1/5,
+  009: 5/1, 021: 6/0, holdout 023: 6/0). The *Invisible Man* side was missed in every
+  one except holdout 024.
+- Not a per-book problem, so per-book slots are not expected to fix these: `chat-015`
+  and `chat-020` (single-book detail missed although the right book supplied all or
+  most chunks), `chat-006` (follow-up), and `chat-025` (same-book control, 6 chunks
+  from one book, one of two quotes found).
+- A separate bug the eval exposed: `chat-026` failed with `answer_truncated`. The model
+  hit the 2000 output-token cap (`finish_reason: length`) on a long comparison answer,
+  and the pipeline publishes only on a clean stop. This is a generation limit, not
+  retrieval; track it separately.
+- Caveats: same-model judge; 23 + 6 cases is still small, so a one-case swing is about
+  4 points (17 on holdout).
+
 ### Experiment 1 (planned): reserve retrieval slots per book
 
 - Hypothesis: comparison questions fail because one search over the whole project lets
@@ -53,8 +81,9 @@ direct and follow-up rows for regressions on every change.
   the rest by overall rank, should raise comparison retrieval without changing the
   answer prompt.
 - Change: `RetrievalService.retrieve` only. No extra model call.
-- Success: comparison retrieval clearly above 2/8 and comparison correct above 0/3,
-  with no drop in the direct and follow-up rows.
+- Success, measured against `baseline-v2`: comparison retrieval clearly above 4/14 and
+  comparison correct above 1/6, with no drop in the direct and follow-up rows, then
+  confirmed on `baseline-v2-holdout` (comparison retrieval above 2/4).
 - Risk: a question about one book now carries 2 off-topic chunks.
 - Result: not run yet.
 
