@@ -15,6 +15,8 @@ same case labels (the `cases_hash` in each snapshot).
 | `baseline-v1` (superseded) | 12 | none (starting point) | 2/8 | 0/3 | 7/14 | 8/12 |
 | `baseline-v2` | 23 | none; more cases | 4/14 | 1/6 (+1 failed) | 12/25 | 14/22 |
 | `baseline-v2-holdout` | 6 | none; held-out cases | 2/4 | 1/2 | 5/7 | 5/6 |
+| `exp1-per-book-slots` | 23 | per-book slots (min 2 per book) | 5/16 | 0/7 | 13/27 | 13/23 |
+| `exp1-per-book-slots-holdout` | 6 | per-book slots (min 2 per book) | 2/4 | 0/2 | 5/7 | 4/6 |
 
 ## Method
 
@@ -74,7 +76,7 @@ direct and follow-up rows for regressions on every change.
 - Caveats: same-model judge; 23 + 6 cases is still small, so a one-case swing is about
   4 points (17 on holdout).
 
-### Experiment 1 (planned): reserve retrieval slots per book
+### Experiment 1: reserve retrieval slots per book (not merged to main)
 
 - Hypothesis: comparison questions fail because one search over the whole project lets
   a single book fill all 6 slots. Guaranteeing each book its best 2 chunks, then filling
@@ -85,7 +87,40 @@ direct and follow-up rows for regressions on every change.
   comparison correct above 1/6, with no drop in the direct and follow-up rows, then
   confirmed on `baseline-v2-holdout` (comparison retrieval above 2/4).
 - Risk: a question about one book now carries 2 off-topic chunks.
-- Result: not run yet.
+- Implementation: `VectorStoreService.balanced_search` and the pure `merge_balanced`,
+  controlled by `RAG_MIN_CHUNKS_PER_DOCUMENT` (default 2; 0 restores plain nearest-k).
+  Commit `652f446`, run from a clean tree. 9 new tests; the retrieval test file passes
+  against Postgres (16 tests).
+- Result: the mechanism worked, the outcome did not. Success criteria were not met.
+  - Distribution is fixed: every cross-book case now has at least 2 chunks from each
+    book (007: 6/0 became 4/2, 021: 6/0 became 4/2, 009: 5/1 became 4/2; holdout 023:
+    6/0 became 4/2).
+  - Retrieval barely moved: comparison 4/14 to 5/16 (one more quote found, `chat-021`);
+    holdout 2/4 unchanged. Comparison correct went 1/6 to 0/7 on dev and 1/2 to 0/2 on
+    holdout. The dev denominators differ because `chat-026` completed this time.
+  - Why: the reserved chunks from the other book are the wrong ones. For the combined
+    two-topic question the other book's best 2 chunks are not the evidence: 007 got
+    pages 73 and 77 of *The Invisible Man* but the evidence is page 20; 009 got 50 and
+    77 but the ending is page 86; 026 got the right book but not pages 27 and 43.
+    Coverage was necessary but not sufficient: the blurred combined query is the
+    remaining problem.
+  - Single-book cost: `chat-025` (same-book control) now carries 2 off-topic
+    *Time Machine* chunks in place of 2 *Invisible Man* chunks; its retrieval was
+    unchanged (1/2) but its answer flipped to wrong. One sample, so this is a risk
+    signal, not proof.
+- Noise to keep in mind: the query rewrite is not deterministic even at temperature 0.
+  Rewrites differed between runs for `chat-005`, `-006`, `-020` and `-024`, so flips in
+  cases with prior turns are not evidence for or against the change. Example: holdout
+  `chat-024` went from 2/2 to 1/2 retrieval, but its books already met the minimum, so
+  the merge changed nothing; only the rewrite wording changed. Cases without prior
+  turns have deterministic retrieval, so `chat-021`'s +1 is real. Citation and
+  support scores also moved on some cases between runs with no retrieval change.
+- Decision: do not merge to main as an improvement. Keep the branch as the base for
+  Experiment 2 (decomposing the question into one focused search per part, each with
+  the per-book minimum), which targets the actual remaining cause.
+- What this does not prove: that a larger minimum (3 or 4 per book) would not help;
+  that is a cheap follow-up (`RAG_MIN_CHUNKS_PER_DOCUMENT=3`) but treat it as tuning,
+  and confirm any gain on the holdout.
 
 ## Template
 
