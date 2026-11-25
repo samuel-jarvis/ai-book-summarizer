@@ -1,6 +1,7 @@
 """Document embeddings stored through SQLAlchemy and PostgreSQL pgvector."""
 
 import math
+from collections import Counter
 from collections.abc import Sequence
 from uuid import UUID, uuid4
 
@@ -17,6 +18,32 @@ from app.models.embedding_generation import EmbeddingGeneration
 from app.models.project import Project
 from app.models.project_documents import ProjectDocument
 from app.services.indexing.embedder import embed_query, embed_texts
+
+
+def merge_balanced(
+    candidates: list[LangChainDocument], k: int, min_per_document: int
+) -> list[LangChainDocument]:
+    """Pick up to `k` chunks, nearest first, keeping each book's best `min_per_document`.
+
+    Each book's closest chunks are reserved (the closest overall if reservations
+    alone exceed `k`); the remaining slots go to the nearest other candidates.
+    """
+    ranked = sorted(
+        {doc.id: doc for doc in candidates}.values(),
+        key=lambda doc: (doc.metadata["cosine_distance"], doc.id),
+    )
+    taken: Counter[str] = Counter()
+    chosen: set[str] = set()
+    for doc in ranked:
+        book = doc.metadata["document_id"]
+        if taken[book] < min_per_document and len(chosen) < k:
+            taken[book] += 1
+            chosen.add(doc.id)
+    for doc in ranked:
+        if len(chosen) >= k:
+            break
+        chosen.add(doc.id)
+    return [doc for doc in ranked if doc.id in chosen]
 
 
 class VectorStoreService:
@@ -149,18 +176,8 @@ class VectorStoreService:
             await self.db.flush()
             return [str(row.id) for row in rows]
 
-    async def similarity_search(
-        self,
-        query: str,
-        *,
-        project_id: UUID,
-        k: int = 4,
-        document_ids: Sequence[UUID] | None = None,
-    ) -> list[LangChainDocument]:
-        """Return nearest chunks from active, compatible generations in an owned project.
-
-        `document_ids` narrows the search; ids outside the project match nothing.
-        """
+    async def _query_vector(self, query: str, project_id: UUID, k: int) -> list[float]:
+        """Validate the request, confirm the project is owned, and embed the query once."""
         if not query.strip() or k < 1:
             raise ValueError("Provide a non-empty query and a positive k.")
         project = await self.db.scalar(
@@ -173,6 +190,77 @@ class VectorStoreService:
             raise NotFoundError("Project not found.")
         vector = await embed_query(query)
         self._validate_vectors([vector], 1)
+        return vector
+
+    async def similarity_search(
+        self,
+        query: str,
+        *,
+        project_id: UUID,
+        k: int = 4,
+        document_ids: Sequence[UUID] | None = None,
+    ) -> list[LangChainDocument]:
+        """Return nearest chunks from active, compatible generations in an owned project.
+
+        `document_ids` narrows the search; ids outside the project match nothing.
+        """
+        vector = await self._query_vector(query, project_id, k)
+        return await self._nearest(
+            vector, project_id=project_id, k=k, document_ids=document_ids
+        )
+
+    async def balanced_search(
+        self,
+        query: str,
+        *,
+        project_id: UUID,
+        k: int = 6,
+        min_per_document: int = 2,
+        document_ids: Sequence[UUID] | None = None,
+    ) -> list[LangChainDocument]:
+        """Nearest chunks, but each book in the project keeps at least `min_per_document`.
+
+        Plain nearest-k lets the best-matching book fill every slot, which starves
+        the other books on questions that span several. This embeds the query
+        once, runs the usual nearest-k search, and searches a book separately only
+        when it fell short. A project with one book, or `min_per_document` of 0,
+        behaves exactly like `similarity_search`.
+        """
+        vector = await self._query_vector(query, project_id, k)
+        nearest = await self._nearest(
+            vector, project_id=project_id, k=k, document_ids=document_ids
+        )
+        if min_per_document < 1:
+            return nearest
+        scope = select(ProjectDocument.document_id).where(
+            ProjectDocument.project_id == project_id
+        )
+        if document_ids is not None:
+            scope = scope.where(ProjectDocument.document_id.in_(document_ids))
+        books = list(await self.db.scalars(scope))
+        if len(books) < 2:
+            return nearest
+        have = Counter(doc.metadata["document_id"] for doc in nearest)
+        extra: list[LangChainDocument] = []
+        for book in books:
+            if have[str(book)] < min_per_document:
+                extra += await self._nearest(
+                    vector,
+                    project_id=project_id,
+                    k=min_per_document,
+                    document_ids=[book],
+                )
+        return merge_balanced(nearest + extra, k, min_per_document)
+
+    async def _nearest(
+        self,
+        vector: list[float],
+        *,
+        project_id: UUID,
+        k: int,
+        document_ids: Sequence[UUID] | None = None,
+    ) -> list[LangChainDocument]:
+        """Run the owner-, project- and generation-scoped nearest-chunk query."""
         distance = DocumentEmbedding.embedding.cosine_distance(vector)
         statement = (
             select(DocumentEmbedding, Document.title, distance.label("distance"))

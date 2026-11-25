@@ -6,6 +6,7 @@ patched with controlled vectors, so no provider calls are made.
 
 import os
 import unittest
+from collections import Counter
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -32,6 +33,7 @@ from app.models.project import Project
 from app.models.project_documents import ProjectDocument
 from app.models.user import User
 from app.services.conversation_service import ConversationService
+from app.services.indexing.vector_store import merge_balanced
 from app.services.retrieval_service import RetrievalResult, RetrievalService, to_source
 
 
@@ -74,6 +76,52 @@ class RetrievalResultTests(unittest.TestCase):
         self.assertTrue(snapshot.retrieval_candidates[0].selected)
         snapshot.selected_sources[0].excerpt = "Changed"
         self.assertNotEqual(result.sources[0].excerpt, "Changed")
+
+
+def chunk(chunk_id, book, distance):
+    return LangChainDocument(
+        id=chunk_id,
+        page_content=chunk_id,
+        metadata={"document_id": book, "cosine_distance": distance},
+    )
+
+
+class MergeBalancedTests(unittest.TestCase):
+    def ids(self, docs):
+        return [doc.id for doc in docs]
+
+    def test_each_book_keeps_its_best_chunks_and_the_rest_fill_by_distance(self):
+        a = [chunk(f"a{i}", "A", 0.1 + i / 100) for i in range(6)]
+        b = [chunk("b0", "B", 0.6), chunk("b1", "B", 0.7)]
+        merged = merge_balanced(a + b, k=6, min_per_document=2)
+        self.assertEqual(self.ids(merged), ["a0", "a1", "a2", "a3", "b0", "b1"])
+
+    def test_zero_minimum_is_plain_nearest_k(self):
+        a = [chunk(f"a{i}", "A", 0.1 + i / 100) for i in range(6)]
+        b = [chunk("b0", "B", 0.6)]
+        self.assertEqual(
+            self.ids(merge_balanced(a + b, k=6, min_per_document=0)),
+            ["a0", "a1", "a2", "a3", "a4", "a5"],
+        )
+
+    def test_book_with_fewer_chunks_than_the_minimum_gets_what_exists(self):
+        a = [chunk(f"a{i}", "A", 0.1 + i / 100) for i in range(6)]
+        merged = merge_balanced(a + [chunk("b0", "B", 0.9)], k=6, min_per_document=2)
+        self.assertEqual(self.ids(merged), ["a0", "a1", "a2", "a3", "a4", "b0"])
+
+    def test_reservations_beyond_k_keep_the_nearest_books_chunks(self):
+        docs = [chunk(f"{book}{i}", book, 0.1 * n + i / 100)
+                for n, book in enumerate("ABCD") for i in range(2)]
+        merged = merge_balanced(docs, k=5, min_per_document=2)
+        self.assertEqual(self.ids(merged), ["A0", "A1", "B0", "B1", "C0"])
+
+    def test_duplicates_from_the_two_searches_are_collapsed(self):
+        merged = merge_balanced(
+            [chunk("a0", "A", 0.1), chunk("a0", "A", 0.1), chunk("b0", "B", 0.5)],
+            k=6,
+            min_per_document=2,
+        )
+        self.assertEqual(self.ids(merged), ["a0", "b0"])
 
 
 @unittest.skipUnless(os.getenv("CHAT_TEST_DATABASE_URL"), "PostgreSQL URL not supplied")
@@ -214,6 +262,44 @@ class RetrievalServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_document_filter_narrows_search(self):
         a, b = await self.document("Book A"), await self.document("Book B")
         await self.index(a)
+        await self.index(b)
+        result = await self.retrieve(document_ids=[a])
+        self.assertEqual({s.document_id for s in result.sources}, {a})
+
+    async def test_every_book_keeps_a_minimum_share_of_the_results(self):
+        a, b = await self.document("Book A"), await self.document("Book B")
+        await self.index(a, chunks=[(f"A{i}", vector(1.0, 0.01 * i)) for i in range(6)])
+        await self.index(b, chunks=[(f"B{i}", vector(0.2, 1.0)) for i in range(3)])
+        plain = await self.retrieve(min_per_document=0)
+        self.assertEqual({s.document_id for s in plain.sources}, {a})
+        balanced = await self.retrieve()
+        self.assertEqual(Counter(s.document_id for s in balanced.sources), {a: 4, b: 2})
+        distances = [s.cosine_distance for s in balanced.sources]
+        self.assertEqual(distances, sorted(distances))
+        self.assertEqual(
+            [s.citation_label for s in balanced.sources],
+            [f"S{n}" for n in range(1, 7)],
+        )
+
+    async def test_single_book_project_is_unchanged_by_balancing(self):
+        a = await self.document("Book A")
+        await self.index(a, chunks=[(f"A{i}", vector(1.0, 0.1 * i)) for i in range(4)])
+        plain = await self.retrieve(min_per_document=0)
+        balanced = await self.retrieve(min_per_document=2)
+        self.assertEqual(
+            [s.chunk_id for s in balanced.sources], [s.chunk_id for s in plain.sources]
+        )
+
+    async def test_book_with_a_single_chunk_contributes_just_that_chunk(self):
+        a, b = await self.document("Book A"), await self.document("Book B")
+        await self.index(a, chunks=[(f"A{i}", vector(1.0, 0.01 * i)) for i in range(6)])
+        await self.index(b, chunks=[("B0", vector(0.2, 1.0))])
+        counts = Counter(s.document_id for s in (await self.retrieve()).sources)
+        self.assertEqual(counts, {a: 5, b: 1})
+
+    async def test_document_filter_still_applies_with_balancing(self):
+        a, b = await self.document("Book A"), await self.document("Book B")
+        await self.index(a, chunks=[(f"A{i}", vector(1.0, 0.01 * i)) for i in range(4)])
         await self.index(b)
         result = await self.retrieve(document_ids=[a])
         self.assertEqual({s.document_id for s in result.sources}, {a})
