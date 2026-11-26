@@ -46,6 +46,34 @@ def merge_balanced(
     return [doc for doc in ranked if doc.id in chosen]
 
 
+def merge_groups(
+    groups: list[list[LangChainDocument]], k: int
+) -> list[LangChainDocument]:
+    """Pick up to `k` chunks so every query group gets an equal share of its own nearest.
+
+    Each group first keeps its `k // len(groups)` nearest chunks (a chunk already
+    taken by an earlier group still counts for a later one). Slots left over,
+    from shared chunks or rounding, go to the nearest remaining candidates.
+    The result is ordered nearest first.
+    """
+
+    def order(doc: LangChainDocument) -> tuple[float, str]:
+        return (doc.metadata["cosine_distance"], doc.id)
+
+    share = max(1, k // len(groups))
+    chosen: dict[str, LangChainDocument] = {}
+    for group in groups:
+        for covered, doc in enumerate(sorted(group, key=order)):
+            if covered >= share or len(chosen) >= k:
+                break
+            chosen.setdefault(doc.id, doc)
+    for doc in sorted((d for g in groups for d in g), key=order):
+        if len(chosen) >= k:
+            break
+        chosen.setdefault(doc.id, doc)
+    return sorted(chosen.values(), key=order)
+
+
 class VectorStoreService:
     """User-scoped ORM storage. The caller commits or rolls back the session.
 
@@ -251,6 +279,31 @@ class VectorStoreService:
                     document_ids=[book],
                 )
         return merge_balanced(nearest + extra, k, min_per_document)
+
+    async def multi_query_search(
+        self,
+        queries: Sequence[str],
+        *,
+        project_id: UUID,
+        k: int = 6,
+        document_ids: Sequence[UUID] | None = None,
+    ) -> list[LangChainDocument]:
+        """Search each query separately and merge, giving every query an equal share.
+
+        Use this for a question split into focused parts: a single blended
+        query matches none of its parts well, so each part is searched on its own.
+        """
+        if not queries:
+            raise ValueError("Provide at least one query.")
+        groups = []
+        for query in queries:
+            vector = await self._query_vector(query, project_id, k)
+            groups.append(
+                await self._nearest(
+                    vector, project_id=project_id, k=k, document_ids=document_ids
+                )
+            )
+        return merge_groups(groups, k)
 
     async def _nearest(
         self,

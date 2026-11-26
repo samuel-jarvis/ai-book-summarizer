@@ -33,7 +33,7 @@ from app.models.project import Project
 from app.models.project_documents import ProjectDocument
 from app.models.user import User
 from app.services.conversation_service import ConversationService
-from app.services.indexing.vector_store import merge_balanced
+from app.services.indexing.vector_store import merge_balanced, merge_groups
 from app.services.retrieval_service import RetrievalResult, RetrievalService, to_source
 
 
@@ -122,6 +122,37 @@ class MergeBalancedTests(unittest.TestCase):
             min_per_document=2,
         )
         self.assertEqual(self.ids(merged), ["a0", "b0"])
+
+
+class MergeGroupsTests(unittest.TestCase):
+    def ids(self, docs):
+        return [doc.id for doc in docs]
+
+    def test_each_query_keeps_an_equal_share_of_its_own_nearest(self):
+        first = [chunk(f"a{i}", "A", 0.1 + i / 100) for i in range(6)]
+        second = [chunk(f"b{i}", "B", 0.5 + i / 100) for i in range(6)]
+        merged = merge_groups([first, second], k=6)
+        self.assertEqual(self.ids(merged), ["a0", "a1", "a2", "b0", "b1", "b2"])
+
+    def test_a_chunk_found_by_both_queries_frees_a_slot_for_the_next_nearest(self):
+        shared = chunk("s0", "A", 0.2)
+        first = [shared] + [chunk(f"a{i}", "A", 0.3 + i / 100) for i in range(5)]
+        second = [shared] + [chunk(f"b{i}", "B", 0.4 + i / 100) for i in range(5)]
+        merged = merge_groups([first, second], k=6)
+        self.assertEqual(self.ids(merged), ["s0", "a0", "a1", "a2", "b0", "b1"])
+
+    def test_three_groups_split_the_slots_and_short_groups_are_topped_up(self):
+        groups = [
+            [chunk("a0", "A", 0.1)],
+            [chunk(f"b{i}", "B", 0.2 + i / 100) for i in range(6)],
+            [chunk(f"c{i}", "C", 0.3 + i / 100) for i in range(6)],
+        ]
+        merged = merge_groups(groups, k=6)
+        self.assertEqual(self.ids(merged), ["a0", "b0", "b1", "b2", "c0", "c1"])
+
+    def test_more_groups_than_slots_still_returns_at_most_k(self):
+        groups = [[chunk(f"g{n}", "A", n / 10)] for n in range(4)]
+        self.assertEqual(self.ids(merge_groups(groups, k=2)), ["g0", "g1"])
 
 
 @unittest.skipUnless(os.getenv("CHAT_TEST_DATABASE_URL"), "PostgreSQL URL not supplied")
@@ -280,6 +311,29 @@ class RetrievalServiceTests(unittest.IsolatedAsyncioTestCase):
             [s.citation_label for s in balanced.sources],
             [f"S{n}" for n in range(1, 7)],
         )
+
+    async def test_split_question_searches_each_part_on_its_own(self):
+        a, b = await self.document("Book A"), await self.document("Book B")
+        await self.index(a, chunks=[(f"A{i}", vector(1.0, 0.01 * i)) for i in range(6)])
+        await self.index(b, chunks=[(f"B{i}", vector(0.01 * i, 1.0)) for i in range(6)])
+        by_query = {"about a": vector(1.0, 0.0), "about b": vector(0.0, 1.0)}
+        embed = AsyncMock(side_effect=lambda query: by_query[query])
+        with patch("app.services.indexing.vector_store.embed_query", new=embed):
+            result = await self.retrieve(queries=["about a", "about b"])
+        self.assertEqual(Counter(s.document_id for s in result.sources), {a: 3, b: 3})
+        self.assertEqual(result.queries, ["about a", "about b"])
+        self.assertEqual(embed.await_count, 2)
+        distances = [s.cosine_distance for s in result.sources]
+        self.assertEqual(distances, sorted(distances))
+        snapshot = result.to_run_snapshot(RunSnapshot())
+        self.assertEqual(snapshot.search_queries, ["about a", "about b"])
+
+    async def test_one_query_list_uses_the_normal_search_and_records_the_query(self):
+        a = await self.document("Book A")
+        await self.index(a)
+        result = await self.retrieve(queries=["only one"])
+        self.assertEqual(result.queries, ["habit formation"])
+        self.assertEqual(len(result.sources), 1)
 
     async def test_single_book_project_is_unchanged_by_balancing(self):
         a = await self.document("Book A")

@@ -17,6 +17,7 @@ from app.services.answer_generation_service import (
 from app.services.conversation_service import ConversationService
 from app.services.jobs.lease import LeaseLost, job_lease, row_renewer
 from app.services.llm.llm_service import LLMService
+from app.services.query_plan_service import QueryPlanService
 from app.services.query_rewrite_service import QueryRewriteService
 from app.services.retrieval_service import RetrievalService
 
@@ -72,9 +73,12 @@ class ConversationPipeline:
                     await ConversationService(db, user_id).checkpoint(
                         run_id, stage="retrieving"
                     )
+                # Plan before opening a session: the model call must not hold one.
+                plan = await QueryPlanService(self.llm).plan(rewrite.query)
+                extra = {"queries": plan.queries} if len(plan.queries) > 1 else {}
                 async with self.sessions() as db:
                     retrieval = await RetrievalService(db, user_id).retrieve(
-                        rewrite.query, project_id=project_id
+                        rewrite.query, project_id=project_id, **extra
                     )
                 async with self.sessions.begin() as db:
                     service = ConversationService(db, user_id)

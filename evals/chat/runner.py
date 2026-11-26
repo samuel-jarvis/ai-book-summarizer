@@ -206,6 +206,7 @@ async def run_case(case: Case, project_id: UUID, user_id: UUID) -> dict:
             "error_code": run.error_code,
             "answer": run.response_text,
             "rewritten_query": run.rewritten_query,
+            "search_queries": run.snapshot.search_queries,
             "pipeline_version": run.pipeline_version,
             "model": run.model,
             "rewrite_model": run.rewrite_model,

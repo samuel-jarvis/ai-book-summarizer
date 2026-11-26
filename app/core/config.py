@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # Retrieval guarantees each book in a multi-book project at least this many
     # chunks, so one book cannot fill every slot. 0 turns the guarantee off.
     RAG_MIN_CHUNKS_PER_DOCUMENT: int = 2
+    # A question about several topics or books is split into at most this many
+    # focused searches, each getting an equal share of the retrieved chunks.
+    # 1 turns the split off and skips its model call.
+    RAG_MAX_SUBQUERIES: int = 3
 
     # Embedding / pgvector tuning. Must match the embedding model's output dim.
     # Default 1536 matches OpenAI's text-embedding-3-small.

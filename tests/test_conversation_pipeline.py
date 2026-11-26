@@ -39,6 +39,10 @@ class ConversationPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.rewriter.rewrite_run.return_value = SimpleNamespace(
             query="Book B habit formation"
         )
+        self.planner = AsyncMock()
+        self.planner.plan.return_value = SimpleNamespace(
+            queries=["Book B habit formation"]
+        )
         self.retrieval = AsyncMock()
         self.retrieval.retrieve.return_value = RetrievalResult([], [])
         self.context = AsyncMock()
@@ -46,6 +50,7 @@ class ConversationPipelineTests(unittest.IsolatedAsyncioTestCase):
         for name, value in (
             ("ConversationService", self.conversation),
             ("QueryRewriteService", self.rewriter),
+            ("QueryPlanService", self.planner),
             ("RetrievalService", self.retrieval),
             ("AnswerContextService", self.context),
             ("AnswerGenerationService", self.generation),
@@ -77,6 +82,19 @@ class ConversationPipelineTests(unittest.IsolatedAsyncioTestCase):
         ]
         assert stages == ["retrieving", "retrieved"]
         self.conversation.fail_if_active.assert_not_awaited()
+
+    async def test_multi_part_plan_is_passed_to_retrieval(self):
+        """A split question searches each part; the stored question stays the rewrite."""
+        self.planner.plan.return_value = SimpleNamespace(
+            queries=["Time Traveller books", "Griffin books"]
+        )
+        await self.pipeline.process(self.run_id, self.user_id)
+        self.planner.plan.assert_awaited_once_with("Book B habit formation")
+        self.retrieval.retrieve.assert_awaited_once_with(
+            "Book B habit formation",
+            project_id=self.project_id,
+            queries=["Time Traveller books", "Griffin books"],
+        )
 
     async def test_redelivered_cancelled_or_deleted_task_is_harmless(self):
         """Only a successful pending-run claim is allowed to start provider work."""

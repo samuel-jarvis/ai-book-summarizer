@@ -36,4 +36,5 @@ def run_info(cases: list[Case], judge_model: str | None) -> dict:
         "cases_hash": cases_hash(cases),
         "judge_model": judge_model,
         "min_chunks_per_document": settings.RAG_MIN_CHUNKS_PER_DOCUMENT,
+        "max_subqueries": settings.RAG_MAX_SUBQUERIES,
     }

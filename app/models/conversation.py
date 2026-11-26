@@ -78,6 +78,8 @@ class RunSnapshot(BaseModel):
     history_messages: list[PromptMessageSnapshot] = Field(default_factory=list)
     # Exact input to the query rewriter; empty when no history was available.
     rewrite_prompt_messages: list[PromptMessageSnapshot] = Field(default_factory=list)
+    # The searches retrieval ran: one query, or one per part of a multi-part question.
+    search_queries: list[str] = Field(default_factory=list)
     retrieval_candidates: list[CandidateSnapshot] = Field(default_factory=list)
     selected_sources: list[SourceSnapshot] = Field(default_factory=list)
     # Fully rendered, ordered model input: system instructions, history, context.
