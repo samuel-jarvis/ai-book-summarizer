@@ -19,11 +19,17 @@ same case labels (the `cases_hash` in each snapshot).
 | `exp1-per-book-slots-holdout` | 6 | per-book slots (min 2 per book) | 2/4 | 0/2 | 5/7 | 4/6 |
 | `exp2-split-queries` | 23 | question split into focused searches | 4/14 (007 failed) | 0/6 (+1 failed) | 12/25 | 13/22 |
 | `exp2-split-queries-holdout` | 6 | question split into focused searches | 2/2 (023 failed) | 1/1 (+1 failed) | 5/5 | 5/5 |
+| `exp3-c300-k6` | 23 | 300-token chunks, top 6 | 3/16 | 0/7 | 9/27 | 11/23 |
+| `exp3-c300-k6-holdout` | 6 | 300-token chunks, top 6 | 2/2 (023 failed) | 1/1 (+1 failed) | 4/5 | 4/5 |
+| `exp3-c300-k16` | 23 | 300-token chunks, top 16 | 3/10 (3 failed) | 0/4 (+3 failed) | 11/21 | 12/20 |
+| `exp3-c300-k16-holdout` | 6 | 300-token chunks, top 16 | 2/4 | 1/2 | 4/7 | 4/6 |
 
 Retrieval and correct counts leave out cases whose answer failed, so a failure can make
 a run look better or worse than it is. Like-for-like retrieval over the same 20
 comparison quotes, recomputed from each report's retrieved chunks including the failed
 cases: `baseline-v2` 6/20, `exp1` 7/20, `exp2` 8/20.
+Over all 34 labeled quotes (dev plus holdout, failed cases included): `baseline-v2` 17/34,
+`exp3-c300-k6` 13/34, `exp3-c300-k16` 17/34.
 
 ## Method
 
@@ -205,6 +211,44 @@ direct and follow-up rows for regressions on every change.
   evidence ranks 8 to 17 inside 800-token chunks and that fix helps with any number
   of documents.
 
+### Experiment 3: smaller chunks (dropped)
+
+- Date: 2026-11-26. Snapshots: `exp3-c300-k6`, `exp3-c300-k16` and their `-holdout` pairs.
+  Code: commit `842fc4e` on the pushed branch `feat/smaller-chunks` (it only makes the
+  retrieval count a setting, `RAG_TOP_K`, default 6, and records chunking and top-k in
+  run stamps). Chunk size was changed through environment variables.
+- Hypothesis: the missing evidence ranks 8 to 17 because exact sentences are buried in
+  800-token chunks, so 300-token chunks should rank them higher.
+- End-to-end result: worse, or no better at the same context size. Like-for-like quotes
+  found over all 34 (failed cases included): baseline-v2 (800 tokens, top 6) 17/34;
+  300 tokens with top 6, 13/34; 300 tokens with top 16 (about the same context tokens),
+  17/34. Overall retrieval counts 9/27 and 11/21 against 12/25. With top 16, three
+  comparison answers ended in `answer_truncated`.
+- Offline check on fixed queries, to remove generation noise: for each of the 34 quotes
+  I ranked its own book's chunks using the baseline run's final query (rewrite included),
+  on four indexes of the same two books. Quotes found within rank N (of 34):
+
+  | Chunk tokens (overlap) | top 3 | top 6 | top 10 | top 16 |
+  |---|---|---|---|---|
+  | 300 (50) | 9 | 16 | 18 | 20 |
+  | 500 (80) | 15 | 18 | 21 | 27 |
+  | 800 (120), current | 19 | 21 | 26 | 29 |
+  | 1200 (150) | 20 | 22 | 25 | 29 |
+
+  Smaller is clearly worse; 800 to 1200 sit on a plateau. At about equal context
+  (800 x 6, 500 x 10, 300 x 16) they find 21, 21 and 20, so there is no gain from
+  re-chunking. The hypothesis is refuted: chunk size is not the lever.
+- What the check does show: the current setup finds 21 of 34 quotes in its book's top
+  6 but 29 of 34 in the top 16, so a good reranker over about 16 candidates has up to
+  8 quotes (24 points) of headroom. It also says what picking the book would be worth:
+  ranking inside the correct book finds 21/34 at top 6 against 17/34 end to end.
+- Decision: keep 800/120; do not merge a chunk-size change. Next experiment:
+  retrieve about 16 and rerank to 6.
+- Caveats: two books and one chunking strategy (token splitter); a quote counts only if
+  it sits wholly in one chunk, which can penalise small chunks slightly (the overlap of
+  50 tokens exceeds a typical quote); the offline ranks assume the right book is known.
+  Extra indexes for 300, 500 and 1200 tokens remain in the eval database.
+
 ## Backlog
 
 Ideas to build later, not yet scheduled.
@@ -223,7 +267,8 @@ Ideas to build later, not yet scheduled.
   answers.
 - Score retrieval even when generation fails, so a failed turn no longer drops out of
   the retrieval metrics.
-- Retrieve more candidates and rerank them; hybrid keyword plus vector search for rare
+- Retrieve about 16 candidates and rerank to 6 (experiment 4; headroom up to 24 points
+  on the current 34 quotes, see experiment 3); hybrid keyword plus vector search for rare
   names such as Marvel and Iping.
 
 ## Template

@@ -1,0 +1,187 @@
+{
+  "name": "exp3-c300-k6-holdout",
+  "run": {
+    "git_commit": "842fc4e",
+    "git_branch": "feat/smaller-chunks",
+    "git_dirty": false,
+    "cases_hash": "d841655543f1",
+    "judge_model": "deepseek-v4-flash",
+    "chunking_version": "rag-cl100k_base-300-50-v1",
+    "top_k": 6,
+    "note": "Experiment 3 holdout: 300/50, top-k 6, commit 842fc4e.",
+    "chunks_per_question": 6
+  },
+  "summary": {
+    "direct": {
+      "cases": 2,
+      "failed": 0,
+      "retrieval": [
+        1,
+        2
+      ],
+      "in_prompt": [
+        1,
+        2
+      ],
+      "citations": [
+        2,
+        2
+      ],
+      "correct": [
+        1,
+        2
+      ],
+      "supported": [
+        2,
+        2
+      ]
+    },
+    "follow_up": {
+      "cases": 1,
+      "failed": 0,
+      "retrieval": [
+        1,
+        1
+      ],
+      "in_prompt": [
+        1,
+        1
+      ],
+      "citations": [
+        1,
+        1
+      ],
+      "correct": [
+        1,
+        1
+      ],
+      "supported": [
+        1,
+        1
+      ]
+    },
+    "comparison": {
+      "cases": 2,
+      "failed": 1,
+      "retrieval": [
+        2,
+        2
+      ],
+      "in_prompt": [
+        2,
+        2
+      ],
+      "citations": [
+        1,
+        1
+      ],
+      "correct": [
+        1,
+        1
+      ],
+      "supported": [
+        1,
+        1
+      ]
+    },
+    "unanswerable": {
+      "cases": 1,
+      "failed": 0,
+      "retrieval": [
+        0,
+        0
+      ],
+      "in_prompt": [
+        0,
+        0
+      ],
+      "citations": [
+        1,
+        1
+      ],
+      "correct": [
+        1,
+        1
+      ],
+      "supported": [
+        0,
+        0
+      ]
+    },
+    "all": {
+      "cases": 6,
+      "failed": 1,
+      "retrieval": [
+        4,
+        5
+      ],
+      "in_prompt": [
+        4,
+        5
+      ],
+      "citations": [
+        5,
+        5
+      ],
+      "correct": [
+        4,
+        5
+      ],
+      "supported": [
+        4,
+        4
+      ]
+    }
+  },
+  "cases": {
+    "chat-016": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-017": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "0/1",
+      "in_prompt": "0/1",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-019": {
+      "type": "follow_up",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-023": {
+      "type": "comparison",
+      "status": "failed"
+    },
+    "chat-024": {
+      "type": "comparison",
+      "status": "completed",
+      "retrieval": "2/2",
+      "in_prompt": "2/2",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-028": {
+      "type": "unanswerable",
+      "status": "completed",
+      "retrieval": null,
+      "in_prompt": null,
+      "citations_valid": true,
+      "correct": true,
+      "supported": null
+    }
+  }
+}
