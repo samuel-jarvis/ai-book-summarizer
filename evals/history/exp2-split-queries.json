@@ -1,0 +1,340 @@
+{
+  "name": "exp2-split-queries",
+  "run": {
+    "git_commit": "d744471",
+    "git_branch": "feat/per-book-retrieval",
+    "git_dirty": false,
+    "cases_hash": "4a122b2b99b4",
+    "judge_model": "deepseek-v4-flash",
+    "min_chunks_per_document": 2,
+    "max_subqueries": 3,
+    "note": "Experiment 2: question split into up to 3 focused searches (RAG_MAX_SUBQUERIES=3) on top of the per-book minimum, commit d744471, clean tree. Compare against baseline-v2 and exp1-per-book-slots. chat-007 failed answer_truncated, so its retrieval is not counted here.",
+    "chunks_per_question": 6
+  },
+  "summary": {
+    "direct": {
+      "cases": 6,
+      "failed": 0,
+      "retrieval": [
+        5,
+        6
+      ],
+      "in_prompt": [
+        5,
+        6
+      ],
+      "citations": [
+        6,
+        6
+      ],
+      "correct": [
+        5,
+        6
+      ],
+      "supported": [
+        5,
+        6
+      ]
+    },
+    "follow_up": {
+      "cases": 5,
+      "failed": 0,
+      "retrieval": [
+        3,
+        5
+      ],
+      "in_prompt": [
+        3,
+        5
+      ],
+      "citations": [
+        5,
+        5
+      ],
+      "correct": [
+        3,
+        5
+      ],
+      "supported": [
+        5,
+        5
+      ]
+    },
+    "comparison": {
+      "cases": 7,
+      "failed": 1,
+      "retrieval": [
+        4,
+        14
+      ],
+      "in_prompt": [
+        4,
+        14
+      ],
+      "citations": [
+        6,
+        6
+      ],
+      "correct": [
+        0,
+        6
+      ],
+      "supported": [
+        6,
+        6
+      ]
+    },
+    "unanswerable": {
+      "cases": 5,
+      "failed": 0,
+      "retrieval": [
+        0,
+        0
+      ],
+      "in_prompt": [
+        0,
+        0
+      ],
+      "citations": [
+        5,
+        5
+      ],
+      "correct": [
+        5,
+        5
+      ],
+      "supported": [
+        0,
+        0
+      ]
+    },
+    "all": {
+      "cases": 23,
+      "failed": 1,
+      "retrieval": [
+        12,
+        25
+      ],
+      "in_prompt": [
+        12,
+        25
+      ],
+      "citations": [
+        22,
+        22
+      ],
+      "correct": [
+        13,
+        22
+      ],
+      "supported": [
+        16,
+        17
+      ]
+    }
+  },
+  "cases": {
+    "chat-001": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-002": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-003": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-004": {
+      "type": "follow_up",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-005": {
+      "type": "follow_up",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-006": {
+      "type": "follow_up",
+      "status": "completed",
+      "retrieval": "0/1",
+      "in_prompt": "0/1",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-007": {
+      "type": "comparison",
+      "status": "failed"
+    },
+    "chat-008": {
+      "type": "comparison",
+      "status": "completed",
+      "retrieval": "0/3",
+      "in_prompt": "0/3",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-009": {
+      "type": "comparison",
+      "status": "completed",
+      "retrieval": "1/3",
+      "in_prompt": "1/3",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-010": {
+      "type": "unanswerable",
+      "status": "completed",
+      "retrieval": null,
+      "in_prompt": null,
+      "citations_valid": true,
+      "correct": true,
+      "supported": null
+    },
+    "chat-011": {
+      "type": "unanswerable",
+      "status": "completed",
+      "retrieval": null,
+      "in_prompt": null,
+      "citations_valid": true,
+      "correct": true,
+      "supported": null
+    },
+    "chat-012": {
+      "type": "unanswerable",
+      "status": "completed",
+      "retrieval": null,
+      "in_prompt": null,
+      "citations_valid": true,
+      "correct": true,
+      "supported": null
+    },
+    "chat-013": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-014": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": false
+    },
+    "chat-015": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "0/1",
+      "in_prompt": "0/1",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-018": {
+      "type": "follow_up",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-020": {
+      "type": "follow_up",
+      "status": "completed",
+      "retrieval": "0/1",
+      "in_prompt": "0/1",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-021": {
+      "type": "comparison",
+      "status": "completed",
+      "retrieval": "1/2",
+      "in_prompt": "1/2",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-022": {
+      "type": "comparison",
+      "status": "completed",
+      "retrieval": "1/2",
+      "in_prompt": "1/2",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-025": {
+      "type": "comparison",
+      "status": "completed",
+      "retrieval": "1/2",
+      "in_prompt": "1/2",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-026": {
+      "type": "comparison",
+      "status": "completed",
+      "retrieval": "0/2",
+      "in_prompt": "0/2",
+      "citations_valid": true,
+      "correct": false,
+      "supported": true
+    },
+    "chat-027": {
+      "type": "unanswerable",
+      "status": "completed",
+      "retrieval": null,
+      "in_prompt": null,
+      "citations_valid": true,
+      "correct": true,
+      "supported": null
+    },
+    "chat-029": {
+      "type": "unanswerable",
+      "status": "completed",
+      "retrieval": null,
+      "in_prompt": null,
+      "citations_valid": true,
+      "correct": true,
+      "supported": null
+    }
+  }
+}
