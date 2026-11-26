@@ -17,6 +17,13 @@ same case labels (the `cases_hash` in each snapshot).
 | `baseline-v2-holdout` | 6 | none; held-out cases | 2/4 | 1/2 | 5/7 | 5/6 |
 | `exp1-per-book-slots` | 23 | per-book slots (min 2 per book) | 5/16 | 0/7 | 13/27 | 13/23 |
 | `exp1-per-book-slots-holdout` | 6 | per-book slots (min 2 per book) | 2/4 | 0/2 | 5/7 | 4/6 |
+| `exp2-split-queries` | 23 | question split into focused searches | 4/14 (007 failed) | 0/6 (+1 failed) | 12/25 | 13/22 |
+| `exp2-split-queries-holdout` | 6 | question split into focused searches | 2/2 (023 failed) | 1/1 (+1 failed) | 5/5 | 5/5 |
+
+Retrieval and correct counts leave out cases whose answer failed, so a failure can make
+a run look better or worse than it is. Like-for-like retrieval over the same 20
+comparison quotes, recomputed from each report's retrieved chunks including the failed
+cases: `baseline-v2` 6/20, `exp1` 7/20, `exp2` 8/20.
 
 ## Method
 
@@ -121,6 +128,51 @@ direct and follow-up rows for regressions on every change.
 - What this does not prove: that a larger minimum (3 or 4 per book) would not help;
   that is a cheap follow-up (`RAG_MIN_CHUNKS_PER_DOCUMENT=3`) but treat it as tuning,
   and confirm any gain on the holdout.
+
+### Experiment 2: split the question into one search per part (not merged to main)
+
+- Date: 2026-11-26. Snapshots: `exp2-split-queries`, `exp2-split-queries-holdout`.
+- Hypothesis: experiment 1 left the other book's reserved chunks wrong because one
+  blended two-topic query matches neither topic. A focused query per part should rank
+  each part's passage higher.
+- Change: `QueryPlanService` asks the model for up to 3 standalone queries; retrieval
+  searches each and `merge_groups` gives each an equal share of the 6 chunks. A
+  single-topic question keeps its original text. Setting `RAG_MAX_SUBQUERIES` (1 = off).
+  Commit `d744471`, clean tree. 14 new tests; full suite 203 passed against Postgres.
+- Mechanism: the plans are good and readable. For 007 the model produced "What did
+  onlookers see when the Time Traveller demonstrated his small model in The Time
+  Machine?" and "What did onlookers see when Griffin removed his disguise in The
+  Invisible Man?". Every cross-book comparison got a 3 + 3 split. The one follow-up
+  comparison (holdout 024) was left as a single query.
+- Result: a small gain, not a fix. Like-for-like comparison quotes found over all 20
+  anchors, failed cases included: baseline-v2 6/20, exp1 7/20, exp2 8/20. Comparison
+  correct is 0/6 on dev (one more failed) and 1/1 on holdout (one failed); the
+  holdout's apparent 100% retrieval is two of its four quotes, because the other case
+  failed. Do not read it as a win.
+- Why it is only a small gain: with focused queries the evidence is usually in the
+  right book but not near the top. Within-book rank of each of the 20 comparison
+  quotes under the sub-queries (measured offline over the top 60 results per query;
+  ranks are approximate and a "miss" can be a cut-off artifact):
+  top 3: 8/20, top 6: 9/20, top 10: 12/20, top 20: 16/20, top 60: 17/20.
+  Examples: 008 gets *Time Machine* p51 at rank 13 and *Invisible Man* p29 at 17;
+  026 gets 15 and 13; 009's p86 ending at 8. Giving each part 3 chunks cannot reach
+  rank 13. The limit is how well embedding similarity ranks an exact detail inside an
+  800-token chunk, not coverage or query wording.
+- New cost and risk: one extra model call per turn, before retrieval. And two of nine
+  comparison answers ended in `answer_truncated` (007 and holdout 023), against one in
+  `baseline-v2` and none in exp1. The 2000-token output cap is hit on long two-part
+  comparison answers, and when that happens the turn fails and its retrieval score is
+  lost. This is now the most user-visible defect the eval has found.
+- Decision: do not merge to main. The split is sound but costs a call per turn for +2
+  of 20 quotes. Keep it on the branch as a component for the next experiment.
+- Next, in order of expected value from the rank data: (1) smaller chunks (for example
+  300 tokens; bump `rag_chunking_version`, re-index) because the evidence is rank 8 to
+  17 inside big chunks; (2) retrieve about 15 per part and rerank down to 3; (3) hybrid
+  keyword plus vector search for rare names such as Marvel or Iping. Separately, fix
+  the truncation (raise or adapt the output cap, or ask for a shorter answer), and make
+  the eval score retrieval even when the answer fails.
+- What this does not prove: that splitting is useless once ranking improves. It may
+  pay off combined with a better ranker, and that is how it should be tested.
 
 ## Template
 
