@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.config import settings
 from app.core.exception import ConflictError, NotFoundError
 from app.models.conversation import RunSnapshot
 from app.services.answer_generation_service import AnswerGenerationError
@@ -41,12 +42,16 @@ class ConversationPipelineTests(unittest.IsolatedAsyncioTestCase):
         )
         self.retrieval = AsyncMock()
         self.retrieval.retrieve.return_value = RetrievalResult([], [])
+        self.reranked = RetrievalResult([], [])
+        self.reranker = AsyncMock()
+        self.reranker.rerank.return_value = self.reranked
         self.context = AsyncMock()
         self.generation = AsyncMock()
         for name, value in (
             ("ConversationService", self.conversation),
             ("QueryRewriteService", self.rewriter),
             ("RetrievalService", self.retrieval),
+            ("RerankService", self.reranker),
             ("AnswerContextService", self.context),
             ("AnswerGenerationService", self.generation),
         ):
@@ -77,6 +82,25 @@ class ConversationPipelineTests(unittest.IsolatedAsyncioTestCase):
         ]
         assert stages == ["retrieving", "retrieved"]
         self.conversation.fail_if_active.assert_not_awaited()
+
+    async def test_reranking_over_retrieves_then_narrows(self):
+        """With reranking on, retrieval fetches more candidates and the model narrows them."""
+        with patch.object(settings, "RAG_RERANK_CANDIDATES", 16):
+            await self.pipeline.process(self.run_id, self.user_id)
+        self.retrieval.retrieve.assert_awaited_once_with(
+            "Book B habit formation", project_id=self.project_id, k=16
+        )
+        self.reranker.rerank.assert_awaited_once_with(
+            "Book B habit formation", self.retrieval.retrieve.return_value
+        )
+        self.context.assemble_run.assert_awaited_once_with(
+            self.run_id, self.user_id, self.reranked, sessions=self.sessions
+        )
+
+    async def test_reranking_is_off_by_default(self):
+        """The default settings keep the plain nearest-k path and make no rerank call."""
+        await self.pipeline.process(self.run_id, self.user_id)
+        self.reranker.rerank.assert_not_awaited()
 
     async def test_redelivered_cancelled_or_deleted_task_is_harmless(self):
         """Only a successful pending-run claim is allowed to start provider work."""

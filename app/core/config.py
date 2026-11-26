@@ -50,6 +50,10 @@ class Settings(BaseSettings):
 
     RAG_CHUNK_TOKENS: int = 800
     RAG_CHUNK_OVERLAP_TOKENS: int = 120
+    # Retrieve this many nearest chunks and let the model pick the best
+    # RAG_RERANK_KEEP of them for the answer. 0 turns reranking off (plain nearest-k).
+    RAG_RERANK_CANDIDATES: int = 0
+    RAG_RERANK_KEEP: int = 6
 
     # Embedding / pgvector tuning. Must match the embedding model's output dim.
     # Default 1536 matches OpenAI's text-embedding-3-small.

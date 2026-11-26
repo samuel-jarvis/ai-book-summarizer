@@ -18,6 +18,7 @@ from app.services.conversation_service import ConversationService
 from app.services.jobs.lease import LeaseLost, job_lease, row_renewer
 from app.services.llm.llm_service import LLMService
 from app.services.query_rewrite_service import QueryRewriteService
+from app.services.rerank_service import RerankService
 from app.services.retrieval_service import RetrievalService
 
 
@@ -72,9 +73,16 @@ class ConversationPipeline:
                     await ConversationService(db, user_id).checkpoint(
                         run_id, stage="retrieving"
                     )
+                # Over-retrieve, then narrow with the model, outside the session.
+                reranking = settings.RAG_RERANK_CANDIDATES > settings.RAG_RERANK_KEEP
+                extra = {"k": settings.RAG_RERANK_CANDIDATES} if reranking else {}
                 async with self.sessions() as db:
                     retrieval = await RetrievalService(db, user_id).retrieve(
-                        rewrite.query, project_id=project_id
+                        rewrite.query, project_id=project_id, **extra
+                    )
+                if reranking:
+                    retrieval = await RerankService(self.llm).rerank(
+                        rewrite.query, retrieval
                     )
                 async with self.sessions.begin() as db:
                     service = ConversationService(db, user_id)

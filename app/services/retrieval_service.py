@@ -23,23 +23,37 @@ class RetrievalResult:
     documents: list[LangChainDocument]
     # Citation-labelled sources for the run snapshot and sources panel.
     sources: list[SourceSnapshot]
+    # Every chunk retrieved before reranking narrowed them; None means all were kept.
+    candidates: list[CandidateSnapshot] | None = None
 
     def to_run_snapshot(self, previous: RunSnapshot | None = None) -> RunSnapshot:
         """Copy retrieval into a snapshot, keeping its other captured inputs."""
         snapshot = previous.model_copy(deep=True) if previous else RunSnapshot()
-        snapshot.retrieval_candidates = [
-            CandidateSnapshot(
-                chunk_id=source.chunk_id,
-                document_id=source.document_id,
-                cosine_distance=source.cosine_distance,
-                selected=True,
-            )
-            for source in self.sources
-        ]
+        if self.candidates is None:
+            snapshot.retrieval_candidates = candidate_snapshots(self.sources)
+        else:
+            kept = {source.chunk_id for source in self.sources}
+            snapshot.retrieval_candidates = [
+                candidate.model_copy(update={"selected": candidate.chunk_id in kept})
+                for candidate in self.candidates
+            ]
         snapshot.selected_sources = [
             source.model_copy(deep=True) for source in self.sources
         ]
         return snapshot
+
+
+def candidate_snapshots(sources: list[SourceSnapshot]) -> list[CandidateSnapshot]:
+    """Record each source as a selected retrieval hit (ids and score only)."""
+    return [
+        CandidateSnapshot(
+            chunk_id=source.chunk_id,
+            document_id=source.document_id,
+            cosine_distance=source.cosine_distance,
+            selected=True,
+        )
+        for source in sources
+    ]
 
 
 def to_source(document: LangChainDocument, label: str) -> SourceSnapshot:
