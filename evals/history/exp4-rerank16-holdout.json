@@ -1,0 +1,187 @@
+{
+  "name": "exp4-rerank16-holdout",
+  "run": {
+    "git_commit": "6dd9d38",
+    "git_branch": "feat/rerank",
+    "git_dirty": false,
+    "cases_hash": "d841655543f1",
+    "judge_model": "deepseek-v4-flash",
+    "rerank_candidates": 16,
+    "rerank_keep": 6,
+    "note": "Experiment 4 holdout: rerank 16 -> 6, commit 6dd9d38.",
+    "chunks_per_question": 16
+  },
+  "summary": {
+    "direct": {
+      "cases": 2,
+      "failed": 0,
+      "retrieval": [
+        2,
+        2
+      ],
+      "in_prompt": [
+        2,
+        2
+      ],
+      "citations": [
+        2,
+        2
+      ],
+      "correct": [
+        2,
+        2
+      ],
+      "supported": [
+        2,
+        2
+      ]
+    },
+    "follow_up": {
+      "cases": 1,
+      "failed": 0,
+      "retrieval": [
+        1,
+        1
+      ],
+      "in_prompt": [
+        1,
+        1
+      ],
+      "citations": [
+        1,
+        1
+      ],
+      "correct": [
+        1,
+        1
+      ],
+      "supported": [
+        1,
+        1
+      ]
+    },
+    "comparison": {
+      "cases": 2,
+      "failed": 1,
+      "retrieval": [
+        1,
+        2
+      ],
+      "in_prompt": [
+        1,
+        2
+      ],
+      "citations": [
+        1,
+        1
+      ],
+      "correct": [
+        1,
+        1
+      ],
+      "supported": [
+        1,
+        1
+      ]
+    },
+    "unanswerable": {
+      "cases": 1,
+      "failed": 0,
+      "retrieval": [
+        0,
+        0
+      ],
+      "in_prompt": [
+        0,
+        0
+      ],
+      "citations": [
+        1,
+        1
+      ],
+      "correct": [
+        1,
+        1
+      ],
+      "supported": [
+        0,
+        0
+      ]
+    },
+    "all": {
+      "cases": 6,
+      "failed": 1,
+      "retrieval": [
+        4,
+        5
+      ],
+      "in_prompt": [
+        4,
+        5
+      ],
+      "citations": [
+        5,
+        5
+      ],
+      "correct": [
+        5,
+        5
+      ],
+      "supported": [
+        4,
+        4
+      ]
+    }
+  },
+  "cases": {
+    "chat-016": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-017": {
+      "type": "direct",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-019": {
+      "type": "follow_up",
+      "status": "completed",
+      "retrieval": "1/1",
+      "in_prompt": "1/1",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-023": {
+      "type": "comparison",
+      "status": "failed"
+    },
+    "chat-024": {
+      "type": "comparison",
+      "status": "completed",
+      "retrieval": "1/2",
+      "in_prompt": "1/2",
+      "citations_valid": true,
+      "correct": true,
+      "supported": true
+    },
+    "chat-028": {
+      "type": "unanswerable",
+      "status": "completed",
+      "retrieval": null,
+      "in_prompt": null,
+      "citations_valid": true,
+      "correct": true,
+      "supported": null
+    }
+  }
+}

@@ -23,6 +23,12 @@ same case labels (the `cases_hash` in each snapshot).
 | `exp3-c300-k6-holdout` | 6 | 300-token chunks, top 6 | 2/2 (023 failed) | 1/1 (+1 failed) | 4/5 | 4/5 |
 | `exp3-c300-k16` | 23 | 300-token chunks, top 16 | 3/10 (3 failed) | 0/4 (+3 failed) | 11/21 | 12/20 |
 | `exp3-c300-k16-holdout` | 6 | 300-token chunks, top 16 | 2/4 | 1/2 | 4/7 | 4/6 |
+| `exp4-rerank16` | 23 | retrieve 16, rerank to 6 | 7/14 (+1 failed) | 1/6 (+1 failed) | 16/25 | 15/22 |
+| `exp4-rerank16-holdout` | 6 | retrieve 16, rerank to 6 | 1/2 (+1 failed) | 1/1 (+1 failed) | 4/5 | 5/5 |
+| `exp4-rerank24` | 23 | retrieve 24, rerank to 6 | 11/16 | 3/7 | 19/27 | 17/23 |
+| `exp4-rerank24-holdout` | 6 | retrieve 24, rerank to 6 | 4/4 | 1/2 | 7/7 | 5/6 |
+| `exp4-rerank32` | 23 | retrieve 32, rerank to 6 | 10/14 (+1 failed) | 3/6 (+1 failed) | 20/25 | 18/22 |
+| `exp4-rerank32-holdout` | 6 | retrieve 32, rerank to 6 | 4/4 | 1/2 | 7/7 | 5/6 |
 
 Retrieval and correct counts leave out cases whose answer failed, so a failure can make
 a run look better or worse than it is. Like-for-like retrieval over the same 20
@@ -30,6 +36,8 @@ comparison quotes, recomputed from each report's retrieved chunks including the 
 cases: `baseline-v2` 6/20, `exp1` 7/20, `exp2` 8/20.
 Over all 34 labeled quotes (dev plus holdout, failed cases included): `baseline-v2` 17/34,
 `exp3-c300-k6` 13/34, `exp3-c300-k16` 17/34.
+Quotes that reached the answer prompt over the same 34 (the figure to compare for
+experiment 4): `exp4-rerank16` 21/34, `exp4-rerank24` 26/34, `exp4-rerank32` 29/34.
 
 ## Method
 
@@ -249,6 +257,52 @@ direct and follow-up rows for regressions on every change.
   50 tokens exceeds a typical quote); the offline ranks assume the right book is known.
   Extra indexes for 300, 500 and 1200 tokens remain in the eval database.
 
+### Experiment 4: retrieve more candidates and rerank (works; not yet merged)
+
+- Date: 2026-11-26. Snapshots: `exp4-rerank16`, `exp4-rerank24`, `exp4-rerank32` and their
+  `-holdout` pairs. Code: commit `6dd9d38` on the pushed branch `feat/rerank`.
+- Hypothesis: experiment 3's rank analysis showed the right chunk usually sits in the top
+  16 to 32 but not the top 6, so retrieving more candidates and letting the model pick
+  the best 6 should recover it.
+- Change: `RAG_RERANK_CANDIDATES` (0 = off, the default) nearest chunks are retrieved; one
+  model call after the database session closes returns the numbers of the best 6
+  (`RerankService`, `RERANK_PROMPT`). The prompt names each passage's book and pages.
+  Unusable output or a provider error falls back to the nearest 6. The run snapshot
+  keeps every candidate with its selection flag. 11 new and updated tests; suite passes.
+- Result, over all 34 labeled quotes (dev plus holdout, failed cases included), quotes
+  that reached the answer prompt:
+
+  | Setting | Quotes in prompt | Comparison (of 20) | Judged correct | Failed turns | Rerank input |
+  |---|---|---|---|---|---|
+  | baseline-v2, 6 nearest | 17/34 | 6 | 19/28 | 1 | none |
+  | retrieve 16, keep 6 | 21/34 | 9 | 20/27 | 2 | about 9,300 tokens |
+  | retrieve 24, keep 6 | 26/34 | 15 | 22/29 | 0 | about 13,800 tokens |
+  | retrieve 32, keep 6 | 29/34 | 16 | 23/28 | 1 | about 18,700 tokens |
+
+  Direct and follow-up quotes also rose or held (7/8 direct and 5/6 follow-up with 16).
+  Holdout: 7/7 quotes in the prompt with both 24 and 32 candidates, against 5/7 for the
+  baseline.
+- The reranker is not the limit. At every pool size it kept every quote that was in the
+  candidate pool (21, 26 and 29 in the pool, the same numbers in the prompt). For
+  `chat-008` with 24 candidates it put the *Time Machine* page 51 chunk (ranked 19th by
+  distance) and the *Invisible Man* page 29 chunk (ranked 10th) at S1 and S2, exactly
+  the labeled evidence. Pool size was the limit, and it matched the offline curve
+  (top 24: 27 of 34, top 32: 29 of 34).
+- Cost and latency: the rerank call reads about 9,300, 13,800 or 18,700 input tokens on
+  top of the usual answer prompt, so a turn costs roughly three to five times the input
+  tokens of plain nearest-6. Token counts are measured from the chunk text; latency was
+  not measured. This is the main reason it is not on by default.
+- Noise: one run per setting; the query rewrite is not deterministic, so expect roughly
+  plus or minus 2 to 3 quotes between identical runs. The jump from 17 to 26 and 29 is
+  larger than that, and consistent across dev and holdout, but 34 quotes is still small.
+  `answer_truncated` still hit `chat-023` and `chat-026` in one run each; it is not
+  related to reranking.
+- Not tested: a cheaper reranker (a small cross-encoder, or a shorter text per passage),
+  reranking only when the first search looks uncertain, more than two books, and whether
+  the model-based ranker matches a trained one.
+- Decision: pending. Recommended: merge with the setting off by default (no behaviour
+  change), then turn on 24 candidates after the cost question is answered.
+
 ## Backlog
 
 Ideas to build later, not yet scheduled.
@@ -267,9 +321,9 @@ Ideas to build later, not yet scheduled.
   answers.
 - Score retrieval even when generation fails, so a failed turn no longer drops out of
   the retrieval metrics.
-- Retrieve about 16 candidates and rerank to 6 (experiment 4; headroom up to 24 points
-  on the current 34 quotes, see experiment 3); hybrid keyword plus vector search for rare
-  names such as Marvel and Iping.
+- Cut the rerank cost (experiment 4 reads 14,000 to 19,000 tokens a turn): a small
+  cross-encoder, shorter passage text, or rerank only when the first search looks
+  uncertain; hybrid keyword plus vector search for rare names such as Marvel and Iping.
 
 ## Template
 
