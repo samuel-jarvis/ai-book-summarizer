@@ -11,6 +11,7 @@ from uuid import UUID
 from langchain_core.documents import Document as LangChainDocument
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.conversation import CandidateSnapshot, RunSnapshot, SourceSnapshot
 from app.services.indexing.vector_store import VectorStoreService
 
@@ -69,10 +70,14 @@ class RetrievalService:
         *,
         project_id: UUID,
         document_ids: Sequence[UUID] | None = None,
-        k: int = 6,
+        k: int | None = None,
     ) -> RetrievalResult:
+        """Return the `k` nearest chunks; `k` defaults to `RAG_TOP_K`."""
         documents = await VectorStoreService(self.db, self.user_id).similarity_search(
-            query, project_id=project_id, k=k, document_ids=document_ids
+            query,
+            project_id=project_id,
+            k=settings.RAG_TOP_K if k is None else k,
+            document_ids=document_ids,
         )
         sources = [
             to_source(document, f"S{index}")

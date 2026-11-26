@@ -211,6 +211,14 @@ class RetrievalServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(result.sources[1].cosine_distance, 0.2, places=5)
         self.assertEqual(result.sources[0].page_start, 0)
 
+    async def test_result_count_follows_the_top_k_setting_unless_k_is_given(self):
+        doc = await self.document("Book A")
+        await self.index(doc, chunks=[(f"A{i}", vector(1.0, 0.1 * i)) for i in range(5)])
+        with patch.object(settings, "RAG_TOP_K", 2):
+            self.assertEqual(len((await self.retrieve()).sources), 2)
+            self.assertEqual(len((await self.retrieve(k=4)).sources), 4)
+        self.assertEqual(len((await self.retrieve()).sources), 5)
+
     async def test_document_filter_narrows_search(self):
         a, b = await self.document("Book A"), await self.document("Book B")
         await self.index(a)

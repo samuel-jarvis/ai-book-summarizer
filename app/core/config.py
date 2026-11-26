@@ -50,6 +50,8 @@ class Settings(BaseSettings):
 
     RAG_CHUNK_TOKENS: int = 800
     RAG_CHUNK_OVERLAP_TOKENS: int = 120
+    # How many nearest chunks retrieval returns for one question.
+    RAG_TOP_K: int = 6
 
     # Embedding / pgvector tuning. Must match the embedding model's output dim.
     # Default 1536 matches OpenAI's text-embedding-3-small.

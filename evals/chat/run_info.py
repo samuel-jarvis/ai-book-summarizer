@@ -4,6 +4,8 @@ import hashlib
 import json
 import subprocess
 
+from app.core.config import settings
+
 from .cases import Case
 
 
@@ -33,4 +35,6 @@ def run_info(cases: list[Case], judge_model: str | None) -> dict:
         "git_dirty": None if status is None else bool(status),
         "cases_hash": cases_hash(cases),
         "judge_model": judge_model,
+        "chunking_version": settings.rag_chunking_version,
+        "top_k": settings.RAG_TOP_K,
     }
